@@ -90,10 +90,13 @@ function Overrider:revert_all()
 	end
 end
 
+-- Fake weapon base classes are cached here, never in _G.
+local fake_weapon_base_classes = {}
+
 _G.Faker = _G.Faker or {
-	using_game_classes = false,
 	classes = {},
 	overrider = Overrider:new(),
+	_sandbox_active = false,
 }
 
 function Faker:redo_class(name, parent_name)
@@ -111,45 +114,117 @@ function Faker:redo_class(name, parent_name)
 	self.classes[name] = result
 end
 
-function Faker:swap_redone_classes()
-	for k, v in pairs(self.classes) do
-		_G[k], self.classes[k] = self.classes[k], _G[k]
-	end
-end
-
+-- Deprecated. Kept as no-ops so that any external caller still resolves, but
+-- swapping _G weapon classes is gone for good: it leaked fake classes into the
+-- real game whenever an error happened between the swap and the unswap.
 function Faker:use_game_classes()
-	self.overrider:replace_once(managers.player, 'remove_property', function_empty)
-	self.overrider:replace_once(managers.player, 'send_message_now', function_empty)
-	self.overrider:replace_once(managers, 'achievment', self.fill_with_empty_methods(AchievmentManager))
-	self.overrider:replace_once(managers, 'challenge', self.fill_with_empty_methods(ChallengeManager))
-	managers.challenge.get_all_active_challenges = function_empty_table
-	self.overrider:replace_once(managers, 'enemy', self.fill_with_empty_methods(EnemyManager))
-	self.overrider:replace_once(managers, 'hud', self.fill_with_empty_methods(HUDManager))
-	self.overrider:replace_once(managers, 'job', self.fill_with_empty_methods(JobManager))
-	self.overrider:replace_once(managers, 'mission', self.fill_with_empty_methods(MissionManager))
-	self.overrider:replace_once(managers, 'statistics', self.fill_with_empty_methods(StatisticsManager))
-
-	if self.using_game_classes then
-		return
-	end
-
-	self.using_game_classes = true
-	self:swap_redone_classes()
-
-	return true
+	return false
 end
 
+-- Deprecated no-op, see Faker:use_game_classes().
 function Faker:use_normal_classes()
-	self.overrider:revert_all()
+	return false
+end
 
-	if not self.using_game_classes then
-		return
+-- Runs fn with stubbed managers and restores every replaced field afterwards,
+-- even if fn errors. Safe to nest (each call restores what it replaced).
+-- Returns ok, result_or_error.
+function Faker:sandbox(fn)
+	if type(fn) ~= 'function' then
+		return false, 'sandbox: expected a function, got ' .. type(fn)
 	end
 
-	self.using_game_classes = false
-	self:swap_redone_classes()
+	if self._sandbox_active then
+		-- The outer sandbox already installed the stubs and will restore them;
+		-- do not rebuild (or re-restore) them here.
+		local ok, result = pcall(fn)
+		if not ok then
+			log('[MWS] statistics sandbox failed: ' .. tostring(result))
+			return false, result
+		end
+		return true, result
+	end
 
-	return true
+	if not managers then
+		-- Too early for managers (we are a pre-hook on lib/entry).
+		local ok, result = pcall(fn)
+		if not ok then
+			log('[MWS] statistics sandbox failed: ' .. tostring(result))
+			return false, result
+		end
+		return true, result
+	end
+
+	local restores = {}
+
+	local function remember(obj, key, replacement)
+		if not obj then
+			return
+		end
+		restores[#restores + 1] = { obj = obj, key = key, old = obj[key] }
+		if replacement ~= nil then
+			obj[key] = replacement
+		end
+	end
+
+	local function remember_manager(name, class_name, extra_key, extra_value)
+		local class_table = _G[class_name]
+		if not class_table then
+			log('[MWS] sandbox: manager class not loaded: ' .. tostring(class_name))
+			return
+		end
+		local stubbed, stub = pcall(self.fill_with_empty_methods, class_table)
+		if not stubbed then
+			error(('[MWS] sandbox: could not stub manager class %s: %s'):format(tostring(class_name), tostring(stub)), 0)
+		end
+		if extra_key then
+			stub[extra_key] = extra_value
+		end
+		remember(managers, name, stub)
+	end
+
+	-- Installing the stubs is fallible too (fill_with_empty_methods walks class
+	-- tables). Protect it with pcall so a mid-install error still reaches the
+	-- restore loop below instead of leaking the stubs installed so far.
+	local installed, install_err = pcall(function()
+		remember(managers.player, 'remove_property', function_empty)
+		remember(managers.player, 'send_message_now', function_empty)
+		remember_manager('achievment', 'AchievmentManager')
+		remember_manager('challenge', 'ChallengeManager', 'get_all_active_challenges', function_empty_table)
+		remember_manager('enemy', 'EnemyManager')
+		remember_manager('hud', 'HUDManager')
+		remember_manager('job', 'JobManager')
+		remember_manager('mission', 'MissionManager')
+		remember_manager('statistics', 'StatisticsManager')
+	end)
+
+	local ok, result
+	if installed then
+		self._sandbox_active = true
+		ok, result = pcall(fn)
+	else
+		-- Do not run fn against a half-installed sandbox.
+		ok, result = false, install_err
+	end
+
+	for i = #restores, 1, -1 do
+		local saved = restores[i]
+		local restored, restore_err = pcall(function()
+			saved.obj[saved.key] = saved.old
+		end)
+		if not restored then
+			log(('[MWS] sandbox: could not restore managers field "%s": %s'):format(tostring(saved.key), tostring(restore_err)))
+		end
+	end
+
+	self._sandbox_active = false
+
+	if not ok then
+		log('[MWS] statistics sandbox failed: ' .. tostring(result))
+		return false, result
+	end
+
+	return true, result
 end
 
 function Faker.spy(tbl, name, recursive, verbose, processed)
@@ -252,17 +327,17 @@ end
 function Faker.make_player_unit(weapon_base, st_moving, st_ducking, st_deploy, st_steelsight)
 	local result = Faker.make_unit()
 
-	local original_player_unit = managers.player.player_unit
-	managers.player.player_unit = function()
-		return result
-	end
-
 	result.m_head_pos = function()
 		return Vector3()
 	end
 
-	result._inventory = PlayerInventory:new(result)
-	result._inventory._link_weapon = function_empty
+	-- A fake inventory with empty methods. Building a real inventory and
+	-- registering the fake weapon unit on it leaked engine units into the game.
+	local inventory = PlayerInventory and Faker.fill_with_empty_methods(PlayerInventory) or {}
+	inventory.add_unit = function_empty
+	inventory.remove_unit = function_empty
+	inventory._link_weapon = function_empty
+	result._inventory = inventory
 	result.inventory = function(self)
 		return self._inventory
 	end
@@ -290,9 +365,6 @@ function Faker.make_player_unit(weapon_base, st_moving, st_ducking, st_deploy, s
 	end
 
 	result._movement._current_state = Faker.make_playerstate(result, weapon_base, st_moving, st_ducking, st_deploy, st_steelsight)
-	result._inventory:add_unit(weapon_base._unit, true, true)
-
-	managers.player.player_unit = original_player_unit
 
 	return result
 end
@@ -354,21 +426,21 @@ function Faker.get_weapon_base_class_name(name_id, npc)
 end
 
 function Faker:craft_weapon_base_class(class_name, factory_id, blueprint, name_id)
-	local c_norm_list = self.using_game_classes and self.classes or _G
-	local c_game_list = self.using_game_classes and _G or self.classes
-
-	local cls = c_game_list[class_name] or c_norm_list[class_name]
-	if not cls then
-		cls = c_game_list[class_name] or c_norm_list[class_name]
+	local cached = fake_weapon_base_classes[class_name]
+	if cached then
+		return cached
 	end
 
-	local fake_class_name = 'Fake' .. class_name
-	if _G[fake_class_name] then
-		return _G[fake_class_name]
+	-- Gameplay class snapshot first: self.classes holds the classes taken before
+	-- other mods (and before the menu globals) could touch them.
+	local cls = self.classes[class_name] or _G[class_name]
+	if not cls then
+		log('[Faker] weapon base class not found: ' .. tostring(class_name))
+		return nil
 	end
 
 	local FakeWeaponBase = class(cls)
-	_G[fake_class_name] = FakeWeaponBase
+	fake_weapon_base_classes[class_name] = FakeWeaponBase
 
 	function FakeWeaponBase:init(unit, factory_id, blueprint, name_id)
 		self._blueprint = blueprint
@@ -377,8 +449,13 @@ function Faker:craft_weapon_base_class(class_name, factory_id, blueprint, name_i
 
 		local original_sounddevice = SoundDevice
 		SoundDevice = Faker.make_sounddevice()
-		FakeWeaponBase.super.init(self, unit)
+		local ok, err = pcall(function()
+			FakeWeaponBase.super.init(self, unit)
+		end)
 		SoundDevice = original_sounddevice
+		if not ok then
+			error(err, 0)
+		end
 	end
 
 	function FakeWeaponBase:setup_default()
@@ -419,49 +496,59 @@ function Faker.get_npc_weapon_id(weapon_id)
 end
 
 function Faker:make_weapon_base(factory_id, blueprint, name_id, npc)
-	if self.menuland and not self.using_game_classes then
-		log('[Faker] someone forgot to call use_game_classes()...')
-	end
-
 	local non_npc_name_id = name_id
 	if npc then
 		name_id = self.get_npc_weapon_id(name_id)
 	end
 
-	local class_name = self.get_weapon_base_class_name(non_npc_name_id, npc)
-	local fake_unit = self.make_unit()
-	local FakeClass = self:craft_weapon_base_class(class_name, factory_id, blueprint, name_id)
+	local wbase
 
-	local wbase = FakeClass:new(fake_unit, factory_id, blueprint, name_id)
+	local ok, err = self:sandbox(function()
+		local class_name = self.get_weapon_base_class_name(non_npc_name_id, npc)
+		local FakeClass = self:craft_weapon_base_class(class_name, factory_id, blueprint, name_id)
+		if not FakeClass then
+			error('no fake weapon base class for ' .. tostring(class_name), 0)
+		end
 
-	fake_unit.base = function()
-		return wbase
-	end
+		local fake_unit = self.make_unit()
+		local base = FakeClass:new(fake_unit, factory_id, blueprint, name_id)
 
-	wbase.name_id = name_id
-	wbase.fkr_non_npc_name_id = non_npc_name_id
-	wbase._assembly_complete = true
-	wbase._parts = {}
-	wbase._gadgets = {}
-	wbase.add_destroy_listener = function_empty
-	wbase.on_reload = function_empty
+		fake_unit.base = function()
+			return base
+		end
 
-	if npc then
-		wbase:set_factory_data(factory_id .. '_npc')
-		local setup_data = {
-			expend_ammo = false,
-			autoaim = false,
-			alert_AI = false
-		}
-		wbase:setup(setup_data)
-	end
+		base.name_id = name_id
+		base.fkr_non_npc_name_id = non_npc_name_id
+		base._assembly_complete = true
+		base._parts = {}
+		base._gadgets = {}
+		base.add_destroy_listener = function_empty
+		base.on_reload = function_empty
 
-	wbase:_update_stats_values()
+		if npc then
+			base:set_factory_data(factory_id .. '_npc')
+			local setup_data = {
+				expend_ammo = false,
+				autoaim = false,
+				alert_AI = false
+			}
+			base:setup(setup_data)
+		end
 
-	if not npc then
-		wbase._next_fire_allowed = 0
-		wbase:update_next_shooting_time()
-		wbase:update_damage()
+		base:_update_stats_values()
+
+		if not npc then
+			base._next_fire_allowed = 0
+			base:update_next_shooting_time()
+			base:update_damage()
+		end
+
+		wbase = base
+	end)
+
+	if not ok or not wbase then
+		log(('[MWS] fake weapon base failed for "%s": %s'):format(tostring(name_id), tostring(err)))
+		return nil
 	end
 
 	return wbase

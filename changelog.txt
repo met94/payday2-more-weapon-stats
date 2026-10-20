@@ -1,3 +1,9 @@
+Revision 77:
+- reworked the fake weapon base core: weapon stats no longer swap global weapon classes, no longer leak fake units into the game, and can no longer leave the game with a broken weapon class after an error
+- should fix the crash when applying or previewing a weapon skin with the mod enabled (pending in-game verification)
+- a stat that fails now shows "-" instead of aborting the whole stats panel
+Player notes: you should now be able to preview and apply weapon skins in the Black Market without the game crashing; if a specific stat cannot be computed it shows "-" instead of breaking the panel.
+
 Revision 76:
 - fixed mod settings menu not getting loaded [courtesy of Nexqua]
 

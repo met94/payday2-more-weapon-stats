@@ -675,10 +675,36 @@ end
 
 local mws_original_blackmarketgui_showstats = BlackMarketGui.show_stats
 function BlackMarketGui:show_stats()
-	pcall(function()
+	local ok, err = pcall(function()
 		self:_show_stats()
 	end)
-	Faker:use_normal_classes()
+	if not ok then
+		log('[MWS] stats failed: ' .. tostring(err))
+	end
+end
+
+-- Runs a single stat function. A failing stat writes '-' instead of aborting
+-- the whole panel (and instead of taking the game down with it).
+local function mws_call_stat(gui, stat, wbase, index, texts)
+	if not stat.fct or not texts then
+		return false
+	end
+
+	local ok, err = pcall(stat.fct, gui, wbase, index, texts)
+	if not ok then
+		log(('[MWS] stat "%s" failed: %s'):format(tostring(stat.name), tostring(err)))
+		local ta = texts['a' .. index]
+		if ta then
+			ta:set_text('-')
+		end
+		local tb = texts['b' .. index]
+		if tb then
+			tb:set_text('')
+		end
+		return false
+	end
+
+	return true
 end
 
 function BlackMarketGui:_show_stats()
@@ -688,8 +714,15 @@ function BlackMarketGui:_show_stats()
 
 	mws_original_blackmarketgui_showstats(self)
 
-	Faker:use_game_classes()
+	local ok, err = Faker:sandbox(function()
+		self:mws_fill_stats()
+	end)
+	if not ok then
+		log('[MWS] stats panel aborted: ' .. tostring(err))
+	end
+end
 
+function BlackMarketGui:mws_fill_stats()
 	local slot_data = self._slot_data
 
 	-- breakpoints
@@ -702,43 +735,61 @@ function BlackMarketGui:_show_stats()
 	-- melee
 	if self._mweapon_stats_panel and self._mweapon_stats_panel:visible() then
 		if self.mws_stats_texts then
-			local melee1 = managers.blackmarket:get_melee_weapon_data(self:mws_get_wbase_from_slot(true)._name_id)
-			local melee2 = not slot_data.equipped and managers.blackmarket:get_melee_weapon_data(self:mws_get_wbase_from_slot(false)._name_id)
-			for _, stat in ipairs(self.mws_stats_shown) do
-				local txt1, txt2
-				if stat.name == 'mws_attack_delay' then
-					txt1 = ('%.2fs'):format(melee1.melee_damage_delay or 0)
-					txt2 = melee2 and ('%.2fs'):format(melee2.melee_damage_delay or 0)
-				elseif stat.name == 'mws_cooldown' then
-					txt1 = ('%.2fs'):format(melee1.repeat_expire_t)
-					txt2 = melee2 and ('%.2fs'):format(melee2.repeat_expire_t)
-				elseif stat.name == 'mws_unequip_delay' then
-					txt1 = ('%.2fs'):format(melee1.expire_t)
-					txt2 = melee2 and ('%.2fs'):format(melee2.expire_t)
-				elseif stat.name == 'mws_special' then
-					local function mdescr(melee)
-						return melee and (
-							melee.special_weapon
-							or melee.tase_data and 'tase'
-							or melee.fire_dot_data and 'fire'
-							or melee.dot_data and (melee.dot_data.type or 'dot')
-						)
+			local selected = self:mws_get_wbase_from_slot(true)
+			local equipped = not slot_data.equipped and self:mws_get_wbase_from_slot(false)
+			local melee1 = selected and managers.blackmarket:get_melee_weapon_data(selected._name_id)
+			local melee2 = equipped and managers.blackmarket:get_melee_weapon_data(equipped._name_id)
+			if melee1 then
+				for _, stat in ipairs(self.mws_stats_shown) do
+					local txt1, txt2
+					if stat.name == 'mws_attack_delay' then
+						txt1 = ('%.2fs'):format(melee1.melee_damage_delay or 0)
+						txt2 = melee2 and ('%.2fs'):format(melee2.melee_damage_delay or 0)
+					elseif stat.name == 'mws_cooldown' then
+						txt1 = ('%.2fs'):format(melee1.repeat_expire_t)
+						txt2 = melee2 and ('%.2fs'):format(melee2.repeat_expire_t)
+					elseif stat.name == 'mws_unequip_delay' then
+						txt1 = ('%.2fs'):format(melee1.expire_t)
+						txt2 = melee2 and ('%.2fs'):format(melee2.expire_t)
+					elseif stat.name == 'mws_special' then
+						local function mdescr(melee)
+							return melee and (
+								melee.special_weapon
+								or melee.tase_data and 'tase'
+								or melee.fire_dot_data and 'fire'
+								or melee.dot_data and (melee.dot_data.type or 'dot')
+							)
+						end
+						txt1 = mdescr(melee1)
+						txt2 = mdescr(melee2)
+					elseif stat.name == 'mws_dot_length' then
+						local function mdescr(melee)
+							return melee and (
+								melee.dot_data and melee.dot_data.custom_data and ('%.2fs'):format(melee.dot_data.custom_data.dot_length or 0)
+								or melee.tase_data and melee.tase_data.tase_strength
+								or melee.fire_dot_data and ('%.2fs'):format(melee.fire_dot_data.dot_length or 0)
+							)
+						end
+						txt1 = mdescr(melee1)
+						txt2 = mdescr(melee2)
 					end
-					txt1 = mdescr(melee1)
-					txt2 = mdescr(melee2)
-				elseif stat.name == 'mws_dot_length' then
-					local function mdescr(melee)
-						return melee and (
-							melee.dot_data and melee.dot_data.custom_data and ('%.2fs'):format(melee.dot_data.custom_data.dot_length or 0)
-							or melee.tase_data and melee.tase_data.tase_strength
-							or melee.fire_dot_data and ('%.2fs'):format(melee.fire_dot_data.dot_length or 0)
-						)
-					end
-					txt1 = mdescr(melee1)
-					txt2 = mdescr(melee2)
+					self.mws_stats_texts[stat.name].a1:set_text(txt1 or '')
+					self.mws_stats_texts[stat.name].a2:set_text(txt2 or '')
 				end
-				self.mws_stats_texts[stat.name].a1:set_text(txt1 or '')
-				self.mws_stats_texts[stat.name].a2:set_text(txt2 or '')
+			else
+				-- No melee weapon base for the selected slot: clear the rows
+				-- instead of leaving the previous weapon's numbers on screen.
+				for _, stat in ipairs(self.mws_stats_shown) do
+					local texts = self.mws_stats_texts[stat.name]
+					if texts then
+						if texts.a1 then
+							texts.a1:set_text('-')
+						end
+						if texts.a2 then
+							texts.a2:set_text('')
+						end
+					end
+				end
 			end
 		end
 	end
@@ -751,40 +802,47 @@ function BlackMarketGui:_show_stats()
 			local wbase_equipped = not slot_data.equipped and self:mws_get_wbase_from_slot(false)
 
 			for _, stat in ipairs(self.mws_stats_shown) do
-				if stat.fct and self.mws_stats_texts[stat.name] then
-					stat.fct(self, wbase_selected, '1', self.mws_stats_texts[stat.name])
+				local texts = self.mws_stats_texts[stat.name]
+				if stat.fct and texts then
+					mws_call_stat(self, stat, wbase_selected, '1', texts)
 					if wbase_equipped then
-						stat.fct(self, wbase_equipped, '2', self.mws_stats_texts[stat.name])
+						mws_call_stat(self, stat, wbase_equipped, '2', texts)
 					else
-						self.mws_stats_texts[stat.name].a2:set_text('')
-						self.mws_stats_texts[stat.name].b2:set_text('')
+						texts.a2:set_text('')
+						texts.b2:set_text('')
 					end
 				end
 			end
 
 			if self.mws_range_charts then
 				local function update_bars(wbase, chart)
-					if wbase and wbase.is_weak_hit and wbase._optimal_distance + wbase._optimal_range ~= 0 and wbase:weapon_tweak_data().damage_falloff then
-						local fake_player_unit = wbase and Faker.make_player_unit(wbase, false, self.mws_ducking, false, self.mws_in_steelsight)
-						local col_ray = { distance = 0 }
-						local function get_text_height_colour(i)
-							col_ray.distance = (i - 1) * 50
-							local value = wbase:get_damage_falloff(1, col_ray, fake_player_unit)
-							local dmg = value * wbase._damage * 10
-							local txt = managers.localization:text('mws_range_chart_text', {
-								DMG = ('%.1f'):format(dmg),
-								DIS = ('%.1f'):format(col_ray.distance / 100)
-							})
-							if value == 1 then
-								return txt, 1, Color(0.2, 1, 1, 1)
-							else
-								return txt, (value - 1) * -25, tweak_data.screen_colors[value < 1 and 'stats_negative' or 'stats_positive']
+					local ok, err = pcall(function()
+						if wbase and wbase.is_weak_hit and wbase._optimal_distance + wbase._optimal_range ~= 0 and wbase:weapon_tweak_data().damage_falloff then
+							local fake_player_unit = wbase and Faker.make_player_unit(wbase, false, self.mws_ducking, false, self.mws_in_steelsight)
+							local col_ray = { distance = 0 }
+							local function get_text_height_colour(i)
+								col_ray.distance = (i - 1) * 50
+								local value = wbase:get_damage_falloff(1, col_ray, fake_player_unit)
+								local dmg = value * wbase._damage * 10
+								local txt = managers.localization:text('mws_range_chart_text', {
+									DMG = ('%.1f'):format(dmg),
+									DIS = ('%.1f'):format(col_ray.distance / 100)
+								})
+								if value == 1 then
+									return txt, 1, Color(0.2, 1, 1, 1)
+								else
+									return txt, (value - 1) * -25, tweak_data.screen_colors[value < 1 and 'stats_negative' or 'stats_positive']
+								end
 							end
+							chart:update(get_text_height_colour)
+							chart:show()
+						else
+							chart:hide()
 						end
-						chart:update(get_text_height_colour)
-						chart:show()
-					else
-						chart:hide()
+					end)
+					if not ok then
+						log('[MWS] range chart failed: ' .. tostring(err))
+						pcall(function() chart:hide() end)
 					end
 				end
 				update_bars(wbase_selected, self.mws_range_charts[1])
@@ -865,14 +923,15 @@ function BlackMarketGui:_show_stats()
 			for _, stat in ipairs(self.mws_stats_shown) do
 				if stat.fct then
 					local text_name = stat.text_name or stat.name
+					local texts = self.mws_stats_texts[text_name]
 					if wbase_equipped then
-						stat.fct(self, wbase_equipped, '1', self.mws_stats_texts[text_name])
+						mws_call_stat(self, stat, wbase_equipped, '1', texts)
 					end
 					if wbase_selected then
-						stat.fct(self, wbase_selected, '2', self.mws_stats_texts[text_name])
-					else
-						self.mws_stats_texts[text_name].a2:set_text('')
-						self.mws_stats_texts[text_name].b2:set_text('')
+						mws_call_stat(self, stat, wbase_selected, '2', texts)
+					elseif texts then
+						texts.a2:set_text('')
+						texts.b2:set_text('')
 					end
 				end
 			end
@@ -1012,7 +1071,7 @@ end
 local pickup_range_l, pickup_range_h
 
 local mws_original_math_lerp = math.lerp
-function math.mws_lerp(a, b, t)
+local function mws_lerp(a, b, t)
 	pickup_range_l = a
 	pickup_range_h = b
 	return mws_original_math_lerp(a, b, t)
@@ -1023,9 +1082,23 @@ function BlackMarketGui:mws_ammo_pickup(wbase, index, txts)
 	pickup_range_h = -1
 
 	wbase:set_ammo_total(0)
-	math.lerp = math.mws_lerp
-	wbase:add_ammo(1)
-	math.lerp = mws_original_math_lerp
+	local saved_math_lerp = math.lerp
+	math.lerp = mws_lerp
+	local ok, err = pcall(wbase.add_ammo, wbase, 1)
+	math.lerp = saved_math_lerp
+
+	if not ok then
+		log('[MWS] ammo pickup failed: ' .. tostring(err))
+		local ta = txts['a' .. index]
+		if ta then
+			ta:set_text('-')
+		end
+		local tb = txts['b' .. index]
+		if tb then
+			tb:set_text('')
+		end
+		return
+	end
 
 	if pickup_range_l <= 0 and pickup_range_h <= 0 then
 		txts['a' .. index]:set_text('')

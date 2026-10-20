@@ -358,7 +358,9 @@ function BlackMarketGui:mws_consolidate_breakpoints(data, damage, amount_wanted)
 		end
 	end
 
-	if all_bp[1].value >= 20 then
+	-- v76 never dropped rows (outer condition made the loop a no-op);
+	-- keep that display behaviour, only guard the empty table.
+	if all_bp[1] and all_bp[1].value >= 20 then
 		while all_bp[1] and all_bp[1].value < 20 do
 			table.remove(all_bp, 1)
 			nr = nr - 1
@@ -403,12 +405,11 @@ function BlackMarketGui:mws_consolidate_breakpoints(data, damage, amount_wanted)
 end
 
 function BlackMarketGui:mws_update_breakpoints()
-	local changed = Faker:use_game_classes()
-	pcall(function()
+	local ok, err = Faker:sandbox(function()
 		self:_mws_update_breakpoints()
 	end)
-	if changed then
-		Faker:use_normal_classes()
+	if not ok then
+		log('[MWS] breakpoints failed: ' .. tostring(err))
 	end
 end
 
@@ -426,27 +427,46 @@ function BlackMarketGui:_mws_update_breakpoints()
 		return
 	end
 
+	local function reset_cells()
+		for _, cell_dmg in pairs(self.mws_bp_bullet) do
+			cell_dmg:set_text('-')
+			cell_dmg:set_color(Color.white:with_alpha(0.5))
+		end
+	end
+
+	-- equipped_primary / equipped_secondary are temporarily faked so that
+	-- mws_equipped_selected() returns the selected slot; restore them whatever
+	-- happens below.
 	local original_primary = BlackMarketManager.equipped_primary
 	local original_secondary = BlackMarketManager.equipped_secondary
+	local function restore_equipped()
+		BlackMarketManager.equipped_primary = original_primary
+		BlackMarketManager.equipped_secondary = original_secondary
+	end
+
 	if self._slot_data.category == 'primaries' then
 		BlackMarketManager.equipped_primary = mws_equipped_selected
 	elseif self._slot_data.category == 'secondaries' then
 		BlackMarketManager.equipped_secondary = mws_equipped_selected
 	end
 
-	local params = self:mws_prepare_breakpoints_params(wbase)
-	local breakpoints_data = self:mws_get_all_breakpoints(params)
+	local ok, err = pcall(function()
+		local params = self:mws_prepare_breakpoints_params(wbase)
+		local breakpoints_data = self:mws_get_all_breakpoints(params)
 
-	self.mws_bp_current_damage = wbase._damage * 10
-	self.mws_bp_ref_damage, self.mws_breakpoints = self:mws_consolidate_breakpoints(breakpoints_data, self.mws_bp_current_damage, #self.mws_bp_damage)
+		self.mws_bp_current_damage = wbase._damage * 10
+		self.mws_bp_ref_damage, self.mws_breakpoints = self:mws_consolidate_breakpoints(breakpoints_data, self.mws_bp_current_damage, #self.mws_bp_damage)
+	end)
 
-	BlackMarketManager.equipped_primary = original_primary
-	BlackMarketManager.equipped_secondary = original_secondary
+	restore_equipped()
 
-	for _, cell_dmg in pairs(self.mws_bp_bullet) do
-		cell_dmg:set_text('-')
-		cell_dmg:set_color(Color.white:with_alpha(0.5))
+	if not ok then
+		log('[MWS] breakpoints failed: ' .. tostring(err))
+		reset_cells()
+		return
 	end
+
+	reset_cells()
 
 	local ut = self.mws_unit_types
 	for i, cell_dmg in pairs(self.mws_bp_damage) do
