@@ -13,6 +13,7 @@ Revision 78:
 - the breakpoint table, its bonus toggles and the difficulty picker are now pure Lua, and previewing another difficulty no longer changes the difficulty the game is running
 - melee and henchman/NPC stats now come from tweak data through the ui/melee and ui/henchmen modules, with no fake unit behind the preview
 - extended stats show both ends of every range again (moving spread, ammo pickup min/max, equip/unequip, tactical vs single-shell reload), and coexistence with Super Duper Skin Swapper, Optional Skin Attachments, Hide Duplicate Skins, VanillaHUD Plus, The Fixes, Anticrash, Mod Hider and Extra Heist Info is verified without a compatibility shim
+- added MENU_OPTIONS.md: every menu option plus the display rows that are only editable in `mods\saves\more_weapon_stats.txt`, how to edit them, and what the breakpoint difficulty preview does
 Player notes: stats and skin previews no longer go through the old fake weapon engine, which was the thing that could crash the game around skin swapping.
 
 Revision 76:
