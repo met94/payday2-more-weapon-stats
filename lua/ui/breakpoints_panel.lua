@@ -903,13 +903,27 @@ end
 --[[
 v76 wrapped the breakpoint update in a pcall and logged the error. refresh is
 reachable from mouse_pressed, so one throwing engine callback must not escape
-the menu; on failure the panel is left blank rather than half-filled.
+the menu; on failure the panel is cleared best-effort and left blank rather
+than half-filled.
 ]]
 local function log_failure(where, err)
 	local log_fn = raw_global('log')
 
 	if type(log_fn) == 'function' then
 		pcall(log_fn, ('[More Weapon Stats] breakpoints_panel %s: %s'):format(where, tostring(err)))
+	end
+end
+
+--[[
+Recovery wrapper for clear(). A throw can come from a cell's own set_text /
+set_color, which the recovery clear would hit a second time; this helper must
+never throw, or the failure would escape refresh through mouse_pressed again.
+]]
+local function safe_clear(gui)
+	local ok, err = pcall(breakpoints_panel.clear, gui)
+
+	if not ok then
+		log_failure('clear', err)
 	end
 end
 
@@ -978,7 +992,7 @@ function breakpoints_panel.refresh(gui, context)
 
 	if not ok then
 		log_failure('refresh', err)
-		breakpoints_panel.clear(gui)
+		safe_clear(gui)
 	end
 end
 

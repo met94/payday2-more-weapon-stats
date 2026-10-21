@@ -16,7 +16,9 @@ adapter code:
 	* a toggled bonus survives a Black Market rebuild (the v76 class-level seed);
 	* explosion breakpoints follow the conservative blocked path (no modifier
 	  answer, a throwing modify_value, an active crime spree);
-	* a throwing render is logged and leaves a blank panel instead of escaping.
+	* a throwing render is logged and leaves a blank panel instead of escaping;
+	* a cell that throws during the fill and again during the recovery clear
+	  cannot escape `refresh` either.
 
 Expected numbers are the breakpoint values the v76 panel produced, recalculated
 from the real 248.2 tweak data in tests/fixtures.lua (CAR-4, no upgrade values,
@@ -684,6 +686,53 @@ return function(t)
 			t.assert_nil(gui.mws_bp_current_damage, 'no damage value after the failure')
 			t.assert_true(#logged >= 1, 'failure logged')
 			t.assert_true(tostring(logged[1]):find('breakpoints_panel refresh', 1, true) ~= nil, 'log names the panel refresh')
+		end)
+	end)
+
+	t.test('a throwing cell cannot escape refresh through the recovery clear', function()
+		with_managers({}, function()
+			local gui, ctx = render()
+			local cell = gui.mws_bp_panel:child('mws_bp_bullet_1_swat')
+			local calls = 0
+
+			-- First call (the pre-fill clear) works, the fill throws, and the
+			-- recovery clear hits the same cell again.
+			cell.set_text = function(self, value)
+				calls = calls + 1
+
+				if calls >= 2 then
+					error('cell set_text exploded')
+				end
+
+				self._text = value
+			end
+
+			local logged = {}
+			local ok, err = pcall(function()
+				with_global('log', function(message)
+					logged[#logged + 1] = message
+				end, function()
+					breakpoints_panel.refresh(gui, ctx)
+				end)
+			end)
+
+			t.assert_true(ok, 'refresh returned without throwing: ' .. tostring(err))
+			t.assert_true(calls >= 3, 'cell threw during the fill and again during the recovery clear')
+
+			local refresh_logged, clear_logged = false, false
+
+			for _, message in ipairs(logged) do
+				if tostring(message):find('breakpoints_panel refresh', 1, true) then
+					refresh_logged = true
+				end
+
+				if tostring(message):find('breakpoints_panel clear', 1, true) then
+					clear_logged = true
+				end
+			end
+
+			t.assert_true(refresh_logged, 'render failure logged')
+			t.assert_true(clear_logged, 'recovery clear failure logged')
 		end)
 	end)
 end
