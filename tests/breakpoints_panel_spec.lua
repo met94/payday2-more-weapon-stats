@@ -12,7 +12,11 @@ adapter code:
 	  untouched;
 	* an empty or locked slot hides the panel, a nil model leaves '-' cells;
 	* a second refresh blanks every cell before filling (no stale values);
-	* multiplayer keeps the picker read-only and follows the game difficulty.
+	* multiplayer keeps the picker read-only and follows the game difficulty;
+	* a toggled bonus survives a Black Market rebuild (the v76 class-level seed);
+	* explosion breakpoints follow the conservative blocked path (no modifier
+	  answer, a throwing modify_value, an active crime spree);
+	* a throwing render is logged and leaves a blank panel instead of escaping.
 
 Expected numbers are the breakpoint values the v76 panel produced, recalculated
 from the real 248.2 tweak data in tests/fixtures.lua (CAR-4, no upgrade values,
@@ -149,6 +153,12 @@ local function fake_gui(options)
 		mws_bonuses = options.bonuses or bonus_state(),
 	}
 
+	-- A rebuilt gui has no bonus table of its own (init seeds it); the refresh
+	-- path must fall back to the module's session seed.
+	if options.rebuilt then
+		gui.mws_bonuses = nil
+	end
+
 	local rows = options.rows or ROWS
 
 	for index = 1, rows do
@@ -248,6 +258,8 @@ local function managers_stub(options)
 		skilltree = {
 			_global = { skills = skill_entries },
 		},
+		modifiers = options.modifiers,
+		crime_spree = options.crime_spree,
 	}
 end
 
@@ -537,6 +549,141 @@ return function(t)
 				t.assert_equal(cell_text(gui, 1, 'tank'), '35', 'reachable cell refilled')
 				t.assert_equal(damage_text(gui, 1), '54.69', 'damage cell refilled')
 			end)
+		end)
+	end)
+
+	t.test('a toggled bonus survives a Black Market rebuild', function()
+		with_managers({}, function()
+			-- underdog defaults to off and changes every unit's breakpoints.
+			local bitmap = new_text('underdog')
+			bitmap._inside = true
+
+			local first, first_ctx = render({ bitmaps = { [3] = bitmap } })
+			breakpoints_panel.refresh(first, first_ctx)
+
+			local default_text = damage_text(first, 1)
+			t.assert_equal(default_text, '54.69', 'table before the toggle')
+
+			breakpoints_panel.click_bonus(first, bitmap)
+			breakpoints_panel.refresh(first, first_ctx)
+
+			local toggled_text = damage_text(first, 1)
+
+			t.assert_equal(first.mws_bonuses.underdog.checked, true, 'toggle on in the first gui')
+			t.assert_true(toggled_text ~= default_text, 'toggle changes the table')
+
+			-- Reopening the Black Market builds a new gui without a bonus table of
+			-- its own; v76 kept the table on the class, so the choice came back.
+			local rebuilt_bitmap = new_text('underdog')
+			rebuilt_bitmap._inside = true
+
+			local rebuilt, rebuilt_ctx = render({ rebuilt = true, bitmaps = { [3] = rebuilt_bitmap } })
+			t.assert_nil(rebuilt.mws_bonuses, 'rebuilt gui starts without a bonus table')
+
+			breakpoints_panel.refresh(rebuilt, rebuilt_ctx)
+
+			t.assert_equal(rebuilt.mws_bonuses.underdog.checked, true, 'checked state seeded from the session')
+			t.assert_equal(damage_text(rebuilt, 1), toggled_text, 'same table after the rebuild')
+
+			-- A toggle set on the rebuilt gui is the new session state.
+			breakpoints_panel.set_bonus_state(rebuilt, 'underdog', false)
+
+			local third, third_ctx = render({ rebuilt = true })
+			breakpoints_panel.refresh(third, third_ctx)
+			t.assert_equal(third.mws_bonuses.underdog.checked, false, 'cleared state survives the next rebuild')
+			t.assert_equal(damage_text(third, 1), default_text, 'default table after the rebuild')
+		end)
+	end)
+
+	t.test('explosion breakpoints use the conservative blocked path', function()
+		context.invalidate()
+
+		local function explosive_gui(options)
+			local gui, ctx = render(options)
+			gui._model = weapon.new('judge', fixtures.blueprints.judge_explosive, ctx)
+
+			return gui, ctx
+		end
+
+		-- No modifiers manager at all: v76's query cannot answer, so explosion
+		-- rows are hidden instead of promising damage a mutator can zero.
+		with_managers({}, function()
+			local gui, ctx = explosive_gui()
+			breakpoints_panel.refresh(gui, ctx)
+			t.assert_equal(damage_text(gui, 1), '-', 'hidden without a modifier answer')
+			t.assert_equal(gui.mws_bp_ref_damage, -1, 'no breakpoint reached')
+		end)
+
+		-- A throwing modify_value is the same "cannot answer" case.
+		with_managers({
+			modifiers = {
+				modify_value = function()
+					error('modifier exploded')
+				end,
+			},
+		}, function()
+			local gui, ctx = explosive_gui()
+			breakpoints_panel.refresh(gui, ctx)
+			t.assert_equal(damage_text(gui, 1), '-', 'hidden when the query throws')
+		end)
+
+		-- A real answer that keeps explosion damage draws the table.
+		with_managers({
+			modifiers = {
+				modify_value = function(_, name, value)
+					return value
+				end,
+			},
+		}, function()
+			local gui, ctx = explosive_gui()
+			breakpoints_panel.refresh(gui, ctx)
+			t.assert_true(damage_text(gui, 1) ~= '-', 'drawn when modifiers keep explosion damage')
+			t.assert_true(gui.mws_bp_ref_damage > 0, 'breakpoint reached')
+		end)
+
+		-- An active crime spree is conservative-blocked even when the modifiers
+		-- table answers (v76 primed managers.crime_spree:_setup_modifiers first).
+		with_managers({
+			crime_spree = {
+				is_active = function()
+					return true
+				end,
+			},
+			modifiers = {
+				modify_value = function(_, name, value)
+					return value
+				end,
+			},
+		}, function()
+			local gui, ctx = explosive_gui()
+			breakpoints_panel.refresh(gui, ctx)
+			t.assert_equal(damage_text(gui, 1), '-', 'hidden during an active crime spree')
+		end)
+	end)
+
+	t.test('a throwing render leaves a blank panel instead of escaping the menu', function()
+		with_managers({}, function()
+			context.invalidate()
+
+			local ctx = context.get({ skills = fixtures.skills })
+			local gui = fake_gui()
+
+			gui.mws_get_wbase_from_slot = function()
+				error('engine callback exploded')
+			end
+
+			local logged = {}
+
+			with_global('log', function(message)
+				logged[#logged + 1] = message
+			end, function()
+				breakpoints_panel.refresh(gui, ctx)
+			end)
+
+			t.assert_equal(damage_text(gui, 1), '-', 'panel blanked after the failure')
+			t.assert_nil(gui.mws_bp_current_damage, 'no damage value after the failure')
+			t.assert_true(#logged >= 1, 'failure logged')
+			t.assert_true(tostring(logged[1]):find('breakpoints_panel refresh', 1, true) ~= nil, 'log names the panel refresh')
 		end)
 	end)
 end

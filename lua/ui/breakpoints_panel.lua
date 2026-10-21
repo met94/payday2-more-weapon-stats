@@ -33,7 +33,9 @@ Public API:
 		Blanks every damage and hit cell (also clears the current/ref damage).
 	breakpoints_panel.sync_bonuses(gui, context) -> table
 		Recomputes bonus availability/checked state from the context and updates
-		the bitmap alphas. Survives a page without bitmaps (returns the state).
+		the bitmap alphas. The player's toggles survive a refresh and a Black
+		Market rebuild (the module keeps the v76 class-level seed). Survives a
+		page without bitmaps (returns the state).
 	breakpoints_panel.set_bonus_state(gui, bitmap_or_name, state)
 	breakpoints_panel.click_bonus(gui, bitmap)
 	breakpoints_panel.bonus_at(gui, x, y) -> bitmap|nil
@@ -383,19 +385,10 @@ function breakpoints_panel.difficulty_name(rank)
 	return difficulty_names()[rank]
 end
 
--- PlayerManager:get_difficulty (playermanager.lua:2742) when it exists,
--- otherwise Global.game_settings.difficulty; read-only.
+-- 248.2 has no PlayerManager:get_difficulty; the difficulty the game is running
+-- is Global.game_settings.difficulty (the value the game itself persists, the
+-- same source core/context.lua reads). Read-only.
 local function read_game_difficulty()
-	local player = manager('player')
-
-	if player and type(player.get_difficulty) == 'function' then
-		local ok, value = pcall(player.get_difficulty, player)
-
-		if ok and type(value) == 'string' then
-			return value
-		end
-	end
-
 	local global = raw_global('Global')
 	local game_settings = global and global.game_settings
 	local difficulty = game_settings and game_settings.difficulty
@@ -545,18 +538,34 @@ local function bonus_definitions()
 	return definitions
 end
 
+--[[
+v76 kept the toggle table on the BlackMarketGui class, so a toggle the player
+set survived closing and reopening the menu. The gui itself is rebuilt on every
+Black Market setup, so the same session-lived seed lives here: a new gui copies
+the checked/available state the previous one left behind, then availability is
+recomputed from the context as usual.
+]]
+local session_bonuses
+
 local function default_bonus_state()
 	local state = {}
 
 	for name, definition in pairs(bonus_definitions()) do
+		local previous = type(session_bonuses) == 'table' and session_bonuses[name] or nil
+		local checked = definition.checked_by_default
+
+		if previous and previous.checked ~= nil then
+			checked = previous.checked and true or false
+		end
+
 		state[name] = {
 			index = definition.index,
 			required_level = definition.required_level,
 			checked_by_default = definition.checked_by_default,
 			x = definition.x,
-			level = 0,
-			available = false,
-			checked = definition.checked_by_default,
+			level = previous and previous.level or 0,
+			available = previous and previous.available or false,
+			checked = checked,
 		}
 	end
 
@@ -625,8 +634,9 @@ end
 
 --[[
 Bonus availability from the context. The player's own toggle state survives a
-refresh (the core keeps it through `previous`); a bonus whose skill is not owned
-is forced off and dimmed, exactly like v76's mws_set_bonus_availability.
+refresh (the core keeps it through `previous`) and a rebuild (the session seed
+above); a bonus whose skill is not owned is forced off and dimmed, exactly like
+v76's mws_set_bonus_availability.
 ]]
 function breakpoints_panel.sync_bonuses(gui, context)
 	if type(gui) ~= 'table' then
@@ -639,7 +649,7 @@ function breakpoints_panel.sync_bonuses(gui, context)
 		return gui.mws_bonuses
 	end
 
-	local previous = type(gui.mws_bonuses) == 'table' and gui.mws_bonuses or nil
+	local previous = type(gui.mws_bonuses) == 'table' and gui.mws_bonuses or session_bonuses
 	local state = breakpoints.bonus_availability(context, previous)
 	local definitions = bonus_definitions()
 
@@ -652,6 +662,7 @@ function breakpoints_panel.sync_bonuses(gui, context)
 	end
 
 	gui.mws_bonuses = state
+	session_bonuses = state
 
 	update_bonus_bitmaps(gui)
 
@@ -680,7 +691,17 @@ function breakpoints_panel.set_bonus_state(gui, bitmap, state)
 	local bonus = name and type(bonuses) == 'table' and bonuses[name] or nil
 
 	if bonus then
-		bonus.checked = state and true or false
+		local checked = state and true or false
+
+		bonus.checked = checked
+
+		-- A toggle clicked before the first availability sync must still reach
+		-- the session seed the next gui rebuild reads.
+		local seeded = name and type(session_bonuses) == 'table' and session_bonuses[name] or nil
+
+		if seeded and seeded ~= bonus then
+			seeded.checked = checked
+		end
 	end
 end
 
@@ -721,28 +742,43 @@ end
 --[[
 Explosion damage disabled by a mutator: v76 asked
 	managers.modifiers:modify_value('CopDamage:DamageExplosion', 123, unit_type) == 0
-inside the per-unit loop. The pure maths takes one flag for the whole table, so
-the table is treated as blocked only when every unit type reports 0 (a
-crime-spree/mutator state is global in practice). No manager, no block.
+inside the per-unit loop, after priming an active crime spree with
+`managers.crime_spree:_setup_modifiers()`.
+
+The rewrite does not call that setup method (it writes manager state), and the
+pure maths takes one flag for the whole table. The conservative reading is used
+instead: an active crime spree counts as blocked (v76 only showed explosion rows
+there when the primed modifiers said so), and a query that cannot run (no
+modifiers manager or a throwing modify_value) counts as blocked too. In a normal
+game the query answers, and the table is blocked only when every unit type
+reports 0, which is the global mutator case.
 ]]
 local function explosion_damage_blocked()
+	if crime_spree_active() then
+		return true
+	end
+
 	local modifiers = manager('modifiers')
 
 	if not modifiers or type(modifiers.modify_value) ~= 'function' then
-		return false
+		return true
 	end
 
 	local breakpoints = core_breakpoints()
 	local unit_types = breakpoints and breakpoints.unit_types or {}
 
 	if #unit_types == 0 then
-		return false
+		return true
 	end
 
 	for _, unit_type in ipairs(unit_types) do
 		local ok, value = pcall(modifiers.modify_value, modifiers, 'CopDamage:DamageExplosion', 123, unit_type)
 
-		if not ok or value ~= 0 then
+		if not ok then
+			return true
+		end
+
+		if value ~= 0 then
 			return false
 		end
 	end
@@ -864,6 +900,19 @@ local function fill_cells(gui, list, ref_damage)
 	end
 end
 
+--[[
+v76 wrapped the breakpoint update in a pcall and logged the error. refresh is
+reachable from mouse_pressed, so one throwing engine callback must not escape
+the menu; on failure the panel is left blank rather than half-filled.
+]]
+local function log_failure(where, err)
+	local log_fn = raw_global('log')
+
+	if type(log_fn) == 'function' then
+		pcall(log_fn, ('[More Weapon Stats] breakpoints_panel %s: %s'):format(where, tostring(err)))
+	end
+end
+
 function breakpoints_panel.refresh(gui, context)
 	if type(gui) ~= 'table' then
 		return
@@ -883,47 +932,54 @@ function breakpoints_panel.refresh(gui, context)
 
 	panel:show()
 
-	local breakpoints = core_breakpoints()
-	local difficulty, rank = breakpoints_panel.get_difficulty(gui)
-	local effective_context = context_with_difficulty(context, difficulty, rank)
+	local ok, err = pcall(function()
+		local breakpoints = core_breakpoints()
+		local difficulty, rank = breakpoints_panel.get_difficulty(gui)
+		local effective_context = context_with_difficulty(context, difficulty, rank)
 
-	breakpoints_panel.sync_bonuses(gui, effective_context)
+		breakpoints_panel.sync_bonuses(gui, effective_context)
 
-	local model = type(gui.mws_get_wbase_from_slot) == 'function' and gui:mws_get_wbase_from_slot(false) or nil
+		local model = type(gui.mws_get_wbase_from_slot) == 'function' and gui:mws_get_wbase_from_slot(false) or nil
 
-	if not model or not breakpoints then
+		if not model or not breakpoints then
+			breakpoints_panel.clear(gui)
+			return
+		end
+
+		local blocked = is_explosive(model) and explosion_damage_blocked() or false
+		local params = breakpoints.prepare_params(model, effective_context, gui.mws_bonuses, {
+			explosion_blocked = blocked,
+		})
+
+		if not params then
+			breakpoints_panel.clear(gui)
+			return
+		end
+
+		local data = breakpoints.get_all(params, difficulty)
+		local damage = breakpoints.current_damage(model)
+		local ref_damage, list = breakpoints.consolidate(
+			data,
+			damage,
+			#(gui.mws_bp_damage or {}),
+			settings().fill_breakpoints
+		)
+
+		-- Blank first: a table that got shorter (or a unit that is no longer in
+		-- it) must not keep the previous render's numbers.
 		breakpoints_panel.clear(gui)
-		return
-	end
 
-	local blocked = is_explosive(model) and explosion_damage_blocked() or false
-	local params = breakpoints.prepare_params(model, effective_context, gui.mws_bonuses, {
-		explosion_blocked = blocked,
-	})
+		gui.mws_bp_current_damage = damage
+		gui.mws_bp_ref_damage = ref_damage
+		gui.mws_breakpoints = list
 
-	if not params then
+		fill_cells(gui, list, ref_damage)
+	end)
+
+	if not ok then
+		log_failure('refresh', err)
 		breakpoints_panel.clear(gui)
-		return
 	end
-
-	local data = breakpoints.get_all(params, difficulty)
-	local damage = breakpoints.current_damage(model)
-	local ref_damage, list = breakpoints.consolidate(
-		data,
-		damage,
-		#(gui.mws_bp_damage or {}),
-		settings().fill_breakpoints
-	)
-
-	-- Blank first: a table that got shorter (or a unit that is no longer in it)
-	-- must not keep the previous render's numbers.
-	breakpoints_panel.clear(gui)
-
-	gui.mws_bp_current_damage = damage
-	gui.mws_bp_ref_damage = ref_damage
-	gui.mws_breakpoints = list
-
-	fill_cells(gui, list, ref_damage)
 end
 
 -- Widget construction --------------------------------------------------------
@@ -1225,6 +1281,9 @@ function breakpoints_panel.init(gui)
 	gui.mws_unit_types = breakpoints.unit_types
 
 	if type(gui.mws_bonuses) ~= 'table' then
+		-- Seeded from the session (see default_bonus_state): v76 kept this table
+		-- on the class, so a toggle the player set survived a Black Market
+		-- rebuild instead of snapping back to checked_by_default.
 		gui.mws_bonuses = default_bonus_state()
 	end
 
