@@ -7,6 +7,7 @@ Revision 78:
 - the weapon stat model (damage, magazine/reserve ammo, fire rate, concealment, blueprint mods, skin bonuses) is now computed in pure Lua from tweak data instead of a fake weapon unit
 - henchman weapon previews read damage, magazine, alert size and suppression from the NPC/crew tweak entries, matching how the game spawns those weapons
 - context snapshots (difficulty, stances, skills/perks) are captured once per Black Market page and can no longer be mutated by a stat row
+- reload (full/partial/shell-by-shell), equip/unequip, spread, recoil, damage falloff and ammo pickup are now pure Lua over tweak data plus the player context, with no simulated player state machine
 Player notes: stats and skin previews no longer go through the old fake weapon engine, which was the thing that could crash the game around skin swapping.
 
 Revision 76:

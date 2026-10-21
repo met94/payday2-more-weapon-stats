@@ -33,8 +33,11 @@ WeaponModel contract (subset of the old weapon-base API the UI relies on):
 	can_toggle_firemode(), is_weak_hit(), get_add_head_shot_mul()
 	use_shotgun_reload(), clip_empty(), clip_not_empty()
 
-Later tasks fill the rest; the stubs below return nil instead of inventing a
-value (core/ballistics, core/timers and core/accuracy own that maths).
+The falloff, spread/recoil, reload/equip and ammo-pickup maths live in
+core/ballistics, core/accuracy, core/timers and core/ammo; the methods at the
+end of this file resolve those modules at call time (the entry bootstrap fills
+MoreWeaponStats.core before a menu asks for a model) and return nil while a
+module is still absent.
 
 Formula sources (PAYDAY 2 248.2):
 	lib\units\weapons\newraycastweaponbase.lua:865-1162 _update_stats_values
@@ -1002,6 +1005,13 @@ function WeaponModel:fire_mode_category()
 	return self._fire_mode_category
 end
 
+-- BlackMarketManager:is_weapon_modified (blackmarketmanager.lua:2249): the
+-- blueprint differs from the factory default. core/accuracy needs it for the
+-- "modded" spread/recoil terms.
+function WeaponModel:is_weapon_modified()
+	return is_weapon_modified(self._factory_id, self._blueprint)
+end
+
 function WeaponModel:can_toggle_firemode()
 	-- NewRaycastWeaponBase:can_toggle_firemode (newraycastweaponbase.lua:2121-2130)
 	-- reads the active weapon tweak entry, which is the crew entry for NPCs.
@@ -1058,9 +1068,12 @@ function WeaponModel:_resolve_armor_piercing_chance()
 end
 
 --[[
-NewRaycastWeaponBase:_default_damage_falloff (newraycastweaponbase.lua:223).
-The values are pure tweak data; the distance -> multiplier maths belongs to
-core/ballistics (Task 3).
+NewRaycastWeaponBase:_default_damage_falloff (newraycastweaponbase.lua:223) plus
+BlackMarketManager:modify_damage_falloff (blackmarketmanager.lua:3209), which
+scales/overrides the table from the parts' custom stats. The distance ->
+multiplier maths belongs to core/ballistics (Task 3); this method only produces
+the fields that module reads. The ballistics module is resolved at call time
+because the entry bootstrap loads weapon.lua before ballistics.lua.
 ]]
 function WeaponModel:_apply_damage_falloff()
 	local stat_td = self:stat_tweak_data()
@@ -1073,6 +1086,13 @@ function WeaponModel:_apply_damage_falloff()
 			optimal_range = damage_near,
 			far_falloff = damage_far,
 		}
+	end
+
+	local global = raw_global('MoreWeaponStats')
+	local ballistics = global and global.core and global.core.ballistics
+
+	if ballistics and type(ballistics.modify_falloff) == 'function' then
+		falloff = ballistics.modify_falloff(falloff, self._custom_stats)
 	end
 
 	self._optimal_distance = falloff.optimal_distance or 0
@@ -1424,53 +1444,188 @@ end
 
 -- Later-task seams ---------------------------------------------------------
 
-function WeaponModel:is_weak_hit()
-	-- Called without a distance/user unit the game returns 1
-	-- (newraycastweaponbase.lua:1207); real falloff lives in core/ballistics.
-	return 1
+--[[
+The maths modules are loaded by lua/entry.lua after this file, and tests load the
+same bootstrap, so every seam below resolves its module at call time. A model is
+only built after bootstrap, and a nil module keeps the row blank instead of
+erroring.
+]]
+local function core_module(name)
+	local global = raw_global('MoreWeaponStats')
+	local core = global and global.core
+
+	return core and core[name] or nil
 end
 
-function WeaponModel:get_damage_falloff()
-	-- Task 3: core/ballistics.get_damage_falloff.
-	return nil
+--[[
+NewRaycastWeaponBase:get_damage_falloff(damage, col_ray, user_unit)
+(newraycastweaponbase.lua:1164) returns damage * multiplier; the multiplier is
+core/ballistics' answer. Uses the model damage when no damage is passed.
+]]
+function WeaponModel:get_damage_falloff(damage, distance, context)
+	local ballistics = core_module('ballistics')
+
+	if not ballistics then
+		return nil
+	end
+
+	local multiplier = ballistics.get_damage_falloff(self, distance, context or self._context)
+
+	if multiplier == nil then
+		return nil
+	end
+
+	local base_damage = damage
+
+	if base_damage == nil then
+		base_damage = self._damage
+	end
+
+	if type(base_damage) ~= 'number' then
+		return nil
+	end
+
+	return base_damage * multiplier
 end
 
-function WeaponModel:_get_spread()
-	-- Task 3: core/accuracy.
-	return nil
+-- NewRaycastWeaponBase:is_weak_hit (newraycastweaponbase.lua:1206).
+function WeaponModel:is_weak_hit(distance, context)
+	local ballistics = core_module('ballistics')
+
+	if not ballistics then
+		return 1
+	end
+
+	return ballistics.is_weak_hit(self, distance, context or self._context)
 end
 
-function WeaponModel:reload_speed_multiplier()
-	-- Task 3: core/timers.
-	return nil
+-- NewRaycastWeaponBase:_get_spread (newraycastweaponbase.lua:2649).
+function WeaponModel:_get_spread(context)
+	local accuracy = core_module('accuracy')
+
+	if not accuracy then
+		return nil, nil
+	end
+
+	return accuracy.spread(self, context or self._context)
 end
 
-function WeaponModel:reload_expire_t()
-	return nil
+-- RaycastWeaponBase ammo accessors (raycastweaponbase.lua:1686-1692), so a
+-- caller can set the clip the reload questions are asked about.
+function WeaponModel:get_ammo_remaining_in_clip()
+	return self._ammo_remaining_in_clip
 end
 
-function WeaponModel:reload_enter_expire_t()
-	return nil
+function WeaponModel:set_ammo_remaining_in_clip(ammo_remaining_in_clip)
+	self._ammo_remaining_in_clip = ammo_remaining_in_clip
 end
 
-function WeaponModel:reload_exit_expire_t()
-	return nil
+-- NewRaycastWeaponBase:reload_speed_multiplier (newraycastweaponbase.lua:2903).
+function WeaponModel:reload_speed_multiplier(context)
+	local timers = core_module('timers')
+
+	if not timers then
+		return nil
+	end
+
+	return timers.reload_speed_multiplier(self, context or self._context)
 end
 
-function WeaponModel:started_reload_empty()
-	return nil
+-- NewRaycastWeaponBase:reload_expire_t (newraycastweaponbase.lua:2969).
+function WeaponModel:reload_expire_t(ammo_remaining, is_not_empty)
+	local timers = core_module('timers')
+
+	if not timers then
+		return nil
+	end
+
+	return timers.reload_expire_t(self, ammo_remaining, is_not_empty)
+end
+
+-- NewRaycastWeaponBase:reload_enter_expire_t (newraycastweaponbase.lua:3006).
+function WeaponModel:reload_enter_expire_t(is_not_empty)
+	local timers = core_module('timers')
+
+	if not timers then
+		return nil
+	end
+
+	return timers.reload_enter_expire_t(self, is_not_empty)
+end
+
+-- NewRaycastWeaponBase:reload_exit_expire_t (newraycastweaponbase.lua:3016).
+function WeaponModel:reload_exit_expire_t(is_not_empty)
+	local timers = core_module('timers')
+
+	if not timers then
+		return nil
+	end
+
+	return timers.reload_exit_expire_t(self, is_not_empty)
+end
+
+-- NewRaycastWeaponBase:reload_shell_expire_t (newraycastweaponbase.lua:3034).
+function WeaponModel:reload_shell_expire_t(is_not_empty)
+	local timers = core_module('timers')
+
+	if not timers then
+		return nil
+	end
+
+	return timers.reload_shell_expire_t(self, is_not_empty)
+end
+
+-- NewRaycastWeaponBase:_first_shell_reload_expire_t (newraycastweaponbase.lua:3044).
+function WeaponModel:_first_shell_reload_expire_t(is_not_empty)
+	local timers = core_module('timers')
+
+	if not timers then
+		return nil
+	end
+
+	return timers.first_shell_reload_expire_t(self, is_not_empty)
+end
+
+-- NewRaycastWeaponBase:started_reload_empty (newraycastweaponbase.lua:3095).
+function WeaponModel:started_reload_empty(ammo_remaining)
+	local timers = core_module('timers')
+
+	if not timers then
+		return nil
+	end
+
+	return timers.started_reload_empty(self, ammo_remaining)
 end
 
 function WeaponModel:use_shotgun_reload()
-	return self._use_shotgun_reload
+	local timers = core_module('timers')
+
+	if not timers then
+		return self._use_shotgun_reload and true or false
+	end
+
+	return timers.use_shotgun_reload(self)
 end
 
-function WeaponModel:clip_empty()
-	return false
+-- RaycastWeaponBase:clip_empty / clip_not_empty (raycastweaponbase.lua:1945-1951).
+function WeaponModel:clip_empty(ammo_remaining)
+	local timers = core_module('timers')
+
+	if not timers then
+		return nil
+	end
+
+	return timers.clip_empty(self, ammo_remaining)
 end
 
-function WeaponModel:clip_not_empty()
-	return true
+function WeaponModel:clip_not_empty(ammo_remaining)
+	local timers = core_module('timers')
+
+	if not timers then
+		return nil
+	end
+
+	return timers.clip_not_empty(self, ammo_remaining)
 end
 
 function WeaponModel:get_add_head_shot_mul()

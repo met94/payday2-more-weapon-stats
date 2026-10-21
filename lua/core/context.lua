@@ -21,6 +21,7 @@ Public API:
 			upgrades        table   resolved upgrade values, category -> upgrade -> value
 			detection_risk  number|nil  player suspicion offset * 100, when a loadout exists
 			competitive     boolean the current job is competitive (skin bonuses are off)
+			suppressed      boolean the local player is currently suppressed
 		Methods:
 			ctx:upgrade_value(category, upgrade, default)
 			ctx:temporary_upgrade_value(category, upgrade, default)
@@ -28,7 +29,11 @@ Public API:
 			ctx:has_activate_temporary_upgrade(category, upgrade)
 			ctx:has_category(category)
 			ctx:get_property(name, default)
+			ctx:get_temporary_property(name, default)
 			ctx:body_armor_value(category, override, default)
+			ctx:crew_ability_upgrade_value(upgrade, default)
+			ctx:has_team_category_upgrade(category, upgrade)
+			ctx:team_upgrade_value(category, upgrade, default)
 
 	context.invalidate() -> nil
 		Forgets the cached snapshot. Call at the start of a Black Market render.
@@ -53,6 +58,8 @@ Manager reads (PAYDAY 2 248.2):
 	detection_risk mirrors PlayerManager:_cached_detection_risk (:2778-2788):
 	round(blackmarket:get_suspicion_offset_of_local(SUSPICION_OFFSET_LERP) * 100);
 	competitive mirrors JobManager:is_current_job_competitive (:1685).
+	suppressed mirrors the local player's
+	character_damage:is_suppressed() (:10300), the branch the recoil formulas take.
 ]]
 
 local context = {}
@@ -225,6 +232,37 @@ local function read_competitive()
 end
 
 --[[
+Local player suppression, the branch BlackMarketManager:recoil_addend and
+:recoil_multiplier take (blackmarketmanager.lua:10300, :10357). There is no
+player unit in the main menu, so the snapshot captures false.
+]]
+local function read_suppressed()
+	local player = player_manager()
+
+	if not player or type(player.player_unit) ~= 'function' then
+		return false
+	end
+
+	local ok, unit = pcall(player.player_unit, player)
+
+	if not ok or not unit then
+		return false
+	end
+
+	local ok_damage, damage = pcall(function()
+		return unit:character_damage()
+	end)
+
+	if not ok_damage or not damage or type(damage.is_suppressed) ~= 'function' then
+		return false
+	end
+
+	local ok_value, value = pcall(damage.is_suppressed, damage)
+
+	return ok_value and not not value or false
+end
+
+--[[
 Builds a context from a base snapshot. The methods write through to the
 snapshot's private caches so repeated queries inside one render are answered
 once, while the returned field tables are copies.
@@ -242,6 +280,7 @@ local function make_context(base)
 		upgrades = deep_copy(base.upgrades),
 		detection_risk = base.detection_risk,
 		competitive = base.competitive,
+		suppressed = base.suppressed,
 	}
 
 	local upgrade_cache = base.upgrade_cache
@@ -350,6 +389,44 @@ local function make_context(base)
 		return value
 	end
 
+	-- PlayerManager:get_temporary_property (playermanager.lua:594).
+	function result:get_temporary_property(name, default)
+		local value = query('get_temporary_property', name, default)
+
+		if value == nil then
+			value = default
+		end
+
+		return value
+	end
+
+	-- PlayerManager:crew_ability_upgrade_value (playermanager.lua:1996).
+	function result:crew_ability_upgrade_value(upgrade, default)
+		local value = query('crew_ability_upgrade_value', upgrade, default)
+
+		if value == nil then
+			value = default
+		end
+
+		return value
+	end
+
+	-- PlayerManager:has_team_category_upgrade (playermanager.lua:3496).
+	function result:has_team_category_upgrade(category, upgrade)
+		return query('has_team_category_upgrade', category, upgrade) and true or false
+	end
+
+	-- PlayerManager:team_upgrade_value (playermanager.lua:3473).
+	function result:team_upgrade_value(category, upgrade, default)
+		local value = query('team_upgrade_value', category, upgrade, default)
+
+		if value == nil then
+			value = default
+		end
+
+		return value
+	end
+
 	return result
 end
 
@@ -372,6 +449,7 @@ local function ensure_snapshot()
 		upgrades = {},
 		detection_risk = read_detection_risk(),
 		competitive = read_competitive(),
+		suppressed = read_suppressed(),
 		upgrade_cache = {},
 		property_cache = {},
 	}
