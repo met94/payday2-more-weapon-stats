@@ -50,7 +50,8 @@ because entry.lua runs as a `lib/entry` pre-hook, before any menu or manager
 code can ask for them.
 
 Public namespaces after bootstrap:
-	MoreWeaponStats.core.context | weapon | ballistics | timers | accuracy | ammo
+	MoreWeaponStats.core.context | weapon | ballistics | timers | accuracy | ammo |
+		breakpoints
 	MoreWeaponStats.ui.stats_panel | breakpoints_panel | melee | henchmen
 	MoreWeaponStats.compat
 ]]
@@ -65,6 +66,7 @@ local module_paths = {
 		'timers',
 		'accuracy',
 		'ammo',
+		'breakpoints',
 	},
 	ui = {
 		'stats_panel',

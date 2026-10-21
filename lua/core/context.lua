@@ -34,6 +34,9 @@ Public API:
 			ctx:crew_ability_upgrade_value(upgrade, default)
 			ctx:has_team_category_upgrade(category, upgrade)
 			ctx:team_upgrade_value(category, upgrade, default)
+			ctx:critical_hit_chance() -> number
+			ctx:get_damage_health_ratio(health_ratio, category) -> number
+			ctx:skill_level(skill_id) -> number
 
 	context.invalidate() -> nil
 		Forgets the cached snapshot. Call at the start of a Black Market render.
@@ -425,6 +428,48 @@ local function make_context(base)
 		end
 
 		return value
+	end
+
+	--[[
+	PlayerManager:critical_hit_chance (playermanager.lua:2742). It reads the
+	skill/perk upgrades and the cached detection risk, and answers 0 when no
+	player manager exists (headless, or a main menu without a loadout).
+	]]
+	function result:critical_hit_chance(detection_risk)
+		local value = query('critical_hit_chance', detection_risk or result.detection_risk)
+
+		if type(value) == 'number' then
+			return value
+		end
+
+		return 0
+	end
+
+	--[[
+	PlayerManager:get_damage_health_ratio (playermanager.lua:5409): the 0..1
+	"how hurt am I" scale the berserker/health-ratio skills multiply by. A
+	missing manager answers 0, the value the game returns at full health.
+	]]
+	function result:get_damage_health_ratio(health_ratio, category)
+		local value = query('get_damage_health_ratio', health_ratio, category)
+
+		if type(value) == 'number' then
+			return value
+		end
+
+		return 0
+	end
+
+	-- SkillTreeManager unlock level (see read_skills): 0 when the skill is not in
+	-- the snapshot, which is also the level an unowned skill reports.
+	function result:skill_level(skill_id)
+		local level = result.skills[skill_id]
+
+		if type(level) == 'number' then
+			return level
+		end
+
+		return 0
 	end
 
 	return result
