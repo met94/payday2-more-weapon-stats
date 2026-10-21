@@ -265,13 +265,7 @@ function BlackMarketGui:_setup(is_start_page, component_data)
 	if self._mweapon_stats_panel and identifier == self.identifiers.melee_weapon then
 		base_panel = self._mweapon_stats_panel
 
-		self.mws_stats_shown = {
-			{ name = 'mws_attack_delay' },
-			{ name = 'mws_cooldown' },
-			{ name = 'mws_unequip_delay' },
-			{ name = 'mws_special' },
-			{ name = 'mws_dot_length' }
-		}
+		self.mws_stats_shown = MoreWeaponStats.ui.melee.rows(self)
 
 		text_columns = {
 			{ size = 100, name = 'name' },
@@ -322,40 +316,7 @@ function BlackMarketGui:_setup(is_start_page, component_data)
 		end
 
 		if _henchmen_weapon then
-			self.mws_stats_shown = {
-				{ name = 'mws_spread', fct = self.mws_spread_bot },
-				{ name = 'mws_rof', fct = self.mws_rof_bot },
-				{ name = 'mws_autorounds', fct = self.mws_autorounds_bot },
-				{ name = 'mws_reload_full', fct = self.mws_reload_bot },
-				{ name = 'mws_aim_delay', fct = self.mws_aim_delay_bot },
-			}
-
-			local dis = {}
-			for k, v in pairs(tweak_data.character.russian.weapon) do
-				if v.FALLOFF then
-					for _, f in ipairs(v.FALLOFF) do
-						if f.r then
-							dis[f.r] = f.r
-						end
-					end
-				end
-			end
-			dis = table.map_values(dis)
-			table.sort(dis, function(a, b) return a < b end)
-			for _, d in ipairs(dis) do
-				local clbk = function(...)
-					local params = {...}
-					table.insert(params, d)
-					self.mws_falloff_bot(unpack(params))
-				end
-				table.insert(self.mws_stats_shown, {
-					name = 'mws_damage_hitchance',
-					text_name = 'mws_damage_hitchance_' .. d,
-					fct = clbk,
-					macros = { DIS = d / 100 }
-				} )
-			end
-
+			self.mws_stats_shown = MoreWeaponStats.ui.henchmen.rows(self)
 		else
 			self.mws_stats_shown = MoreWeaponStats.ui.stats_panel.rows(self)
 		end
@@ -693,51 +654,10 @@ function BlackMarketGui:_show_stats()
 
 	-- melee
 	if self._mweapon_stats_panel and self._mweapon_stats_panel:visible() and self.mws_stats_texts then
-		local wbase_selected = self:mws_get_wbase_from_slot(true)
-		local wbase_equipped = not slot_data.equipped and self:mws_get_wbase_from_slot(false)
-		local melee1 = wbase_selected and managers.blackmarket:get_melee_weapon_data(wbase_selected._name_id)
-		local melee2 = wbase_equipped and managers.blackmarket:get_melee_weapon_data(wbase_equipped._name_id)
-		if melee1 then
-			for _, stat in ipairs(self.mws_stats_shown) do
-				local txts = self.mws_stats_texts[stat.name]
-				if txts then
-					local txt1, txt2
-					if stat.name == 'mws_attack_delay' then
-						txt1 = ('%.2fs'):format(melee1.melee_damage_delay or 0)
-						txt2 = melee2 and ('%.2fs'):format(melee2.melee_damage_delay or 0)
-					elseif stat.name == 'mws_cooldown' then
-						txt1 = ('%.2fs'):format(melee1.repeat_expire_t)
-						txt2 = melee2 and ('%.2fs'):format(melee2.repeat_expire_t)
-					elseif stat.name == 'mws_unequip_delay' then
-						txt1 = ('%.2fs'):format(melee1.expire_t)
-						txt2 = melee2 and ('%.2fs'):format(melee2.expire_t)
-					elseif stat.name == 'mws_special' then
-						local function mdescr(melee)
-							return melee and (
-								melee.special_weapon
-								or melee.tase_data and 'tase'
-								or melee.fire_dot_data and 'fire'
-								or melee.dot_data and (melee.dot_data.type or 'dot')
-							)
-						end
-						txt1 = mdescr(melee1)
-						txt2 = mdescr(melee2)
-					elseif stat.name == 'mws_dot_length' then
-						local function mdescr(melee)
-							return melee and (
-								melee.dot_data and melee.dot_data.custom_data and ('%.2fs'):format(melee.dot_data.custom_data.dot_length or 0)
-								or melee.tase_data and melee.tase_data.tase_strength
-								or melee.fire_dot_data and ('%.2fs'):format(melee.fire_dot_data.dot_length or 0)
-							)
-						end
-						txt1 = mdescr(melee1)
-						txt2 = mdescr(melee2)
-					end
-					txts.a1:set_text(txt1 or '')
-					txts.a2:set_text(txt2 or '')
-				end
-			end
-		end
+		local equipped_model = self:mws_get_wbase_from_slot(true)
+		local selected_model = not slot_data.equipped and self:mws_get_wbase_from_slot(false)
+
+		MoreWeaponStats.ui.melee.refresh(self, selected_model, equipped_model, context)
 	end
 
 	-- weapons
@@ -863,23 +783,7 @@ function BlackMarketGui:_show_stats()
 		end
 
 		if self.mws_stats_texts then
-			for _, stat in ipairs(self.mws_stats_shown) do
-				if stat.fct then
-					local text_name = stat.text_name or stat.name
-					local txts = self.mws_stats_texts[text_name]
-					if txts then
-						if wbase_equipped then
-							stat.fct(self, wbase_equipped, '1', txts)
-						end
-						if wbase_selected then
-							stat.fct(self, wbase_selected, '2', txts)
-						else
-							txts.a2:set_text('')
-							txts.b2:set_text('')
-						end
-					end
-				end
-			end
+			MoreWeaponStats.ui.henchmen.refresh(self, wbase_equipped, wbase_selected, context)
 		end
 	end
 end
@@ -945,120 +849,4 @@ function BlackMarketGui:mws_get_wbase_from_slot(equipped, remove_mod, add_mod, s
 			_name_id = weapon_id,
 		}
 	end
-end
-
-function BlackMarketGui.mws_get_weapon_usage_tweak(wbase)
-	if type(wbase) ~= 'table' or type(wbase.weapon_tweak_data) ~= 'function' then
-		return nil
-	end
-
-	local wtd = wbase:weapon_tweak_data()
-	return wtd and tweak_data.character.russian.weapon[wtd.usage], wtd
-end
-
-function BlackMarketGui:mws_reload_bot(wbase, index, txts)
-	local weapon_usage_tweak = self.mws_get_weapon_usage_tweak(wbase)
-	if not weapon_usage_tweak then
-		txts['a' .. index]:set_text('?')
-		txts['b' .. index]:set_text('')
-		return
-	end
-
-	txts['a' .. index]:set_text(('%.2f'):format(weapon_usage_tweak.RELOAD_SPEED))
-end
-
-function BlackMarketGui:mws_aim_delay_bot(wbase, index, txts)
-	local weapon_usage_tweak = self.mws_get_weapon_usage_tweak(wbase)
-	if not weapon_usage_tweak then
-		txts['a' .. index]:set_text('?')
-		txts['b' .. index]:set_text('')
-		return
-	end
-
-	local s = managers.localization:text('menu_seconds_suffix_short')
-	txts['a' .. index]:set_text(('%.2f%s'):format(weapon_usage_tweak.aim_delay[1], s))
-	txts['b' .. index]:set_text((' | %.2f%s'):format(weapon_usage_tweak.aim_delay[2], s))
-end
-
-function BlackMarketGui.mws_CopActionShoot_get_shoot_falloff(target_dis, falloff)
-	for i_range, range_data in ipairs(falloff) do
-		if target_dis < range_data.r then
-			return range_data, i_range
-		end
-	end
-	return falloff[#falloff], #falloff
-end
-
-function BlackMarketGui:mws_falloff_bot(wbase, index, txts, dis)
-	local weapon_usage_tweak = self.mws_get_weapon_usage_tweak(wbase)
-	if not weapon_usage_tweak then
-		txts['a' .. index]:set_text('?')
-		txts['b' .. index]:set_text('')
-		return
-	end
-
-	local falloff, i_range = self.mws_CopActionShoot_get_shoot_falloff(dis - 0.01, weapon_usage_tweak.FALLOFF)
-
-	txts['a' .. index]:set_text(('%.2f'):format(falloff.dmg_mul * wbase._damage * 10))
-	txts['b' .. index]:set_text((' | %i%%'):format(100 * falloff.acc[2]))
-end
-
-function BlackMarketGui:mws_spread_bot(wbase, index, txts)
-	if not wbase then
-		txts['a' .. index]:set_text('')
-		txts['b' .. index]:set_text('')
-	elseif wbase:is_category('saw') then
-		txts['a' .. index]:set_text('')
-		txts['b' .. index]:set_text('')
-	else
-		local weapon_usage_tweak = self.mws_get_weapon_usage_tweak(wbase)
-		if not weapon_usage_tweak then
-			txts['a' .. index]:set_text('?')
-			txts['b' .. index]:set_text('')
-		else
-			txts['a' .. index]:set_text(('%.0f'):format(weapon_usage_tweak.spread))
-			txts['b' .. index]:set_text('')
-		end
-	end
-end
-
-function BlackMarketGui:mws_autorounds_bot(wbase, index, txts)
-	local weapon_usage_tweak, weap_tweak = self.mws_get_weapon_usage_tweak(wbase)
-	if not weapon_usage_tweak then
-		txts['a' .. index]:set_text('?')
-		txts['b' .. index]:set_text('')
-		return
-	end
-
-	local automatic_weap = weap_tweak.auto and weapon_usage_tweak.autofire_rounds and true
-	if automatic_weap then
-		txts['a' .. index]:set_text(('%i'):format(weapon_usage_tweak.autofire_rounds[1]))
-		txts['b' .. index]:set_text((' | %i'):format(weapon_usage_tweak.autofire_rounds[2]))
-	else
-		txts['a' .. index]:set_text('-')
-		txts['b' .. index]:set_text('')
-	end
-end
-
-function BlackMarketGui:mws_rof_bot(wbase, index, txts)
-	local weapon_usage_tweak, weap_tweak = self.mws_get_weapon_usage_tweak(wbase)
-	if not weapon_usage_tweak then
-		txts['a' .. index]:set_text('?')
-		txts['b' .. index]:set_text('')
-		return
-	end
-
-	local rof = -1
-	local automatic_weap = weap_tweak.auto and weapon_usage_tweak.autofire_rounds and true
-	if automatic_weap then
-		-- see NewNPCRaycastWeaponBase:trigger_held()
-		local fire_rate = weap_tweak.auto and weap_tweak.auto.fire_rate or 0.1
-		rof = 60 / fire_rate
-	else
-		-- see end of CopActionShoot:update()
-		local falloff, i_range = self.mws_CopActionShoot_get_shoot_falloff(1500, weapon_usage_tweak.FALLOFF)
-		rof = 60 / falloff.recoil[2]
-	end
-	txts['a' .. index]:set_text(('%.0f'):format(rof))
-	txts['b' .. index]:set_text('')
 end

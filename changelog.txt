@@ -11,6 +11,7 @@ Revision 78:
 - breakpoints are now pure Lua: enemy health and headshot multipliers come from the documented per-difficulty table instead of re-initialising `tweak_data.character`/`tweak_data.player`, so the table can show any difficulty without touching `Global.game_settings.difficulty`
 - Black Market extended stats now read the pure-Lua model (including skin bonuses) instead of fake weapon bases
 - the breakpoint table, its bonus toggles and the difficulty picker are now pure Lua, and previewing another difficulty no longer changes the difficulty the game is running
+- melee and henchman/NPC stats now come from tweak data through the ui/melee and ui/henchmen modules, with no fake unit behind the preview
 Player notes: stats and skin previews no longer go through the old fake weapon engine, which was the thing that could crash the game around skin swapping.
 
 Revision 76:

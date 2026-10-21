@@ -171,6 +171,114 @@ lib/tweak_data/weapontweakdata.lua:6392-6490 _pickup_chance: AMMO_PICKUP is
 Kept explicit per weapon below; the class constants are noted next to each.
 ]]
 
+--[[
+tweak_data.character.russian.weapon = clone(presets.weapon.gang_member)
+(lib/tweak_data/charactertweakdata.lua:3949). The aliases at :9667-9676 share
+the same tables, so the unique FALLOFF distances the henchman rows show are
+100, 300, 500, 700, 1000, 2000, 2500, 3000, 4000 and 10000. Only the fields
+the henchman rows read are copied per usage (aim_delay, spread, RELOAD_SPEED,
+autofire_rounds and the FALLOFF entry fields dmg_mul/r/acc/recoil).
+]]
+local gang_member_weapon = {
+	-- :9103-9151
+	is_pistol = {
+		aim_delay = {0, 0.5},
+		spread = 25,
+		RELOAD_SPEED = 1.5,
+		FALLOFF = {
+			{dmg_mul = 5, r = 700, acc = {1, 1}, recoil = {0.25, 0.45}},
+			{dmg_mul = 2.5, r = 10000, acc = {1, 1}, recoil = {0.7, 1}},
+		},
+	},
+	-- :9163-9214
+	is_rifle = {
+		aim_delay = {0, 0.5},
+		spread = 25,
+		RELOAD_SPEED = 1,
+		-- :4601-4604 (presets.weapon.normal.is_rifle.autofire_rounds)
+		autofire_rounds = {6, 11},
+		FALLOFF = {
+			{dmg_mul = 5, r = 300, acc = {1, 1}, recoil = {0.25, 0.45}},
+			{dmg_mul = 2.5, r = 10000, acc = {1, 1}, recoil = {1, 1.5}},
+		},
+	},
+	-- :9251-9360
+	is_sniper = {
+		aim_delay = {0.25, 1},
+		spread = 25,
+		RELOAD_SPEED = 1,
+		FALLOFF = {
+			{dmg_mul = 10, r = 500, acc = {1, 1}, recoil = {1, 1}},
+			{dmg_mul = 10, r = 1000, acc = {1, 1}, recoil = {2, 3}},
+			{dmg_mul = 10, r = 2500, acc = {0.95, 1}, recoil = {2, 3}},
+			{dmg_mul = 5, r = 4000, acc = {0.9, 0.95}, recoil = {3, 4}},
+			{dmg_mul = 5, r = 10000, acc = {0.85, 0.9}, recoil = {4, 5}},
+		},
+	},
+	-- :9361-9489
+	is_lmg = {
+		aim_delay = {0, 0.5},
+		spread = 30,
+		RELOAD_SPEED = 0.7,
+		-- :5180-5183 (presets.weapon.normal.is_lmg.autofire_rounds)
+		autofire_rounds = {20, 40},
+		FALLOFF = {
+			{dmg_mul = 4, r = 100, acc = {1, 1}, recoil = {0.25, 0.45}},
+			{dmg_mul = 3, r = 1000, acc = {0.85, 0.9}, recoil = {0.4, 0.65}},
+			{dmg_mul = 2, r = 2000, acc = {0.6, 0.8}, recoil = {0.8, 1.25}},
+			{dmg_mul = 1, r = 3000, acc = {0.5, 0.7}, recoil = {0.8, 1.25}},
+			{dmg_mul = 0.4, r = 4000, acc = {0.02, 0.25}, recoil = {1, 2}},
+			{dmg_mul = 0.25, r = 10000, acc = {0.01, 0.1}, recoil = {2, 3}},
+		},
+	},
+	-- :9490-9541
+	is_shotgun_pump = {
+		aim_delay = {0, 0.25},
+		spread = 15,
+		RELOAD_SPEED = 2,
+		FALLOFF = {
+			{dmg_mul = 5, r = 300, acc = {1, 1}, recoil = {0.5, 0.9}},
+			{dmg_mul = 2.5, r = 10000, acc = {1, 1}, recoil = {1.5, 2}},
+		},
+	},
+	-- :9542-9668
+	is_shotgun_mag = {
+		aim_delay = {0, 0.25},
+		spread = 18,
+		RELOAD_SPEED = 1.6,
+		autofire_rounds = {4, 8},
+		FALLOFF = {
+			{dmg_mul = 5, r = 100, acc = {1, 1}, recoil = {0.1, 0.1}},
+			{dmg_mul = 5, r = 500, acc = {1, 1}, recoil = {0.1, 0.1}},
+			{dmg_mul = 4, r = 1000, acc = {0.85, 0.95}, recoil = {0.1, 0.15}},
+			{dmg_mul = 1.5, r = 2000, acc = {0.75, 0.9}, recoil = {0.25, 0.45}},
+			{dmg_mul = 0.5, r = 3000, acc = {0.4, 0.7}, recoil = {0.4, 0.5}},
+			{dmg_mul = 0.1, r = 10000, acc = {0.05, 0.2}, recoil = {0.5, 1}},
+		},
+	},
+	-- :5276-5370 (presets.weapon.normal.is_flamethrower, shared at :9677)
+	is_flamethrower = {
+		aim_delay = {0.5, 0.5},
+		spread = 0,
+		RELOAD_SPEED = 0.6,
+		autofire_rounds = {20, 40},
+		FALLOFF = {
+			{dmg_mul = 6, r = 100, acc = {1, 1}, recoil = {0.15, 0.25}},
+			{dmg_mul = 5, r = 500, acc = {1, 1}, recoil = {0.45, 0.65}},
+			{dmg_mul = 4, r = 1000, acc = {1, 1}, recoil = {0.75, 1}},
+			{dmg_mul = 2, r = 2000, acc = {1, 1}, recoil = {0.75, 1}},
+			{dmg_mul = 1, r = 3000, acc = {1, 1}, recoil = {0.75, 1}},
+		},
+	},
+}
+
+-- :9670-9676: the aliases collapse onto the tables above.
+gang_member_weapon.is_revolver = gang_member_weapon.is_pistol
+gang_member_weapon.is_smg = gang_member_weapon.is_rifle
+gang_member_weapon.is_bullpup = gang_member_weapon.is_rifle
+gang_member_weapon.mac11 = gang_member_weapon.is_rifle
+gang_member_weapon.akimbo_pistol = gang_member_weapon.is_pistol
+
 fixtures.tweak_data = {
 	-- lib/tweak_data/tweakdata.lua:373-382
 	difficulties = {'easy', 'normal', 'hard', 'overkill', 'overkill_145', 'easy_wish', 'overkill_290', 'sm_wish'},
@@ -228,6 +336,11 @@ fixtures.tweak_data = {
 			-- :2762-2764: snapshot of the base headshot multiplier, so it does NOT
 			-- follow the difficulty (see breakpoints.get_for_unit).
 			critical_hits = {damage_mul = 5},
+		},
+		-- :3946-3953 (_init_team_ai): the crew weapon usage tables the henchman
+		-- rows read (see gang_member_weapon above).
+		russian = {
+			weapon = gang_member_weapon,
 		},
 	},
 
@@ -646,6 +759,21 @@ fixtures.tweak_data = {
 			CLIP_AMMO_MAX = 17,
 			NR_CLIPS_MAX = 5,
 			alert_size = 2500,
+			suppression = 1,
+			FIRE_MODE = 'single',
+		},
+		-- Skeleton at lib/tweak_data/weapontweakdata.lua:30171-30176, values
+		-- filled in by _init_data_m95_crew (:2431-2448).
+		m95_crew = {
+			categories = {'snp'},
+			usage = 'is_sniper',
+			sounds = {},
+			use_data = {},
+			DAMAGE = 22.5,
+			CLIP_AMMO_MAX = 5,
+			NR_CLIPS_MAX = 5,
+			auto = {fire_rate = 1.5},
+			alert_size = 5000,
 			suppression = 1,
 			FIRE_MODE = 'single',
 		},
@@ -1091,6 +1219,34 @@ fixtures.tweak_data = {
 
 	-- lib/tweak_data/blackmarket/weaponskinstweakdata.lua (bonus ids only)
 	blackmarket = {
+		-- lib/tweak_data/blackmarket/meleeweaponstweakdata.lua. The fields the
+		-- melee rows read, with the source line of each weapon block.
+		melee_weapons = {
+			-- :15-20 (bare melee weapon; no melee_damage_delay)
+			weapon = {
+				expire_t = 0.6,
+				repeat_expire_t = 0.6,
+			},
+			-- :21-47
+			fists = {
+				expire_t = 1,
+				repeat_expire_t = 0.55,
+				melee_damage_delay = 0.2,
+			},
+			-- :70-82
+			kabar = {
+				repeat_expire_t = 0.6,
+				expire_t = 1.2,
+				melee_damage_delay = 0.1,
+			},
+			-- :1387-1424
+			taser = {
+				tase_data = {tase_strength = 'light'},
+				expire_t = 1,
+				repeat_expire_t = 0.7,
+				melee_damage_delay = 0.1,
+			},
+		},
 		weapon_skins = {
 			new_m4_goldstripes = {weapon_id = 'new_m4', bonus = 'concealment_p1'},
 			new_m4_cs3 = {weapon_id = 'new_m4', bonus = 'recoil_p1'},
