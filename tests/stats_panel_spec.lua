@@ -6,6 +6,8 @@ Covers the adapter seam introduced in Task 5:
 	* settings.display still hides a row (stats_panel.visible);
 	* refresh() formats every row from two real fixture models (CAR-4 equipped,
 	  Judge selected), so a swapped left/right mapping fails;
+	* a shell-by-shell model (Supernova) keeps both the one-round-short reload
+	  and the single-shell time;
 	* every two-value row keeps both ends of its range (ammo pickup min/max,
 	  moving spread, equip/unequip, recoil left/right and up/down);
 	* refresh() blanks cells instead of throwing when a model is nil;
@@ -240,6 +242,25 @@ return function(t)
 		if not ok then
 			error(err, 0)
 		end
+	end)
+
+	t.test('shell-by-shell reload keeps the partial and the single-shell time', function()
+		-- Supernova uses use_shotgun_reload: the one-round-short reload and the
+		-- single-shell timer differ, which is the case the old truncating
+		-- `model and timers.reload_partial(...)` chain blanked.
+		context.invalidate()
+
+		local gui = fake_gui()
+		local ctx = context.get()
+		local equipped = weapon.new_from_slot('supernova', nil, { npc = false })
+		local selected = weapon.new_from_slot('new_m4', nil, { npc = false })
+
+		stats_panel.refresh(gui, selected, equipped, ctx)
+
+		assert_columns(t, gui, 'mws_reload_partial', '1.97s', ' | 0.60s', '2.67s', '')
+		assert_columns(t, gui, 'mws_reload_full', '4.77s', '', '3.43s', '')
+
+		context.invalidate()
 	end)
 
 	t.test('refresh with nil models blanks the cells and never throws', function()

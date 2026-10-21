@@ -5,7 +5,8 @@ Covers the Task 7 compatibility guarantees without a game:
 	* the Black Market hook file captures the previous _setup, show_stats,
 	  update_info_text, mouse_pressed, mouse_moved, close and set_info_text, so
 	  a wrapper installed before MWS still runs (VanillaHUD Plus/Extra Heist
-	  Info load-order chain);
+	  Info load-order chain). mouse_moved is exercised on its fall-through
+	  path; its own hover hits return early by design (no live mod wraps it);
 	* loading the two hook files writes no mod globals outside
 	  MoreWeaponStats (no Faker/Overrider/SimpleChart/DifficultyPicker, no
 	  mws_*); the only new names are SuperBLT's own ModPath/RequiredScript
@@ -178,7 +179,7 @@ local function load_hooks()
 end
 
 return function(t)
-	t.test('a wrapper installed before MWS still runs through every MWS wrapper', function()
+	t.test('a wrapper installed before MWS still runs through the MWS method wrappers', function()
 		local loaded = load_hooks()
 		local gui = loaded.gui
 		local calls = loaded.calls
@@ -200,6 +201,9 @@ return function(t)
 			gui:show_stats()
 			gui:update_info_text()
 			gui:mouse_pressed('0', 0, 0)
+			-- No stance panel/chart: the hover path falls through to the
+			-- captured original. The early-return hover hits are documented in
+			-- lua/compat.lua and are not reachable without engine panels.
 			gui:mouse_moved(nil, 0, 0)
 			gui:close()
 			gui:set_info_text(3, 'text', nil)
@@ -345,19 +349,20 @@ return function(t)
 	t.test('compat.init is idempotent and touches no manager or global', function()
 		local before = global_keys()
 		local managers_sentinel = {marker = true}
+		local global_sentinel = {game_settings = {}}
 		local previous_managers = rawget(_G, 'managers')
 		local previous_global = rawget(_G, 'Global')
 
 		_G.managers = managers_sentinel
-		_G.Global = {game_settings = {}}
+		_G.Global = global_sentinel
 
 		local ok, err = pcall(function()
 			compat.init()
 			compat.init()
 
 			t.assert_true(rawequal(rawget(_G, 'managers'), managers_sentinel), 'managers untouched')
-			t.assert_true(rawequal(rawget(_G, 'Global').game_settings, _G.Global.game_settings), 'Global untouched')
-			t.assert_nil(rawget(_G, 'Global').game_settings.difficulty, 'no difficulty written')
+			t.assert_true(rawequal(rawget(_G, 'Global'), global_sentinel), 'Global untouched')
+			t.assert_nil(global_sentinel.game_settings.difficulty, 'no difficulty written')
 
 			for name in pairs(_G) do
 				t.assert_equal(before[name] ~= nil or name == 'managers' or name == 'Global', true, 'new global ' .. name)
