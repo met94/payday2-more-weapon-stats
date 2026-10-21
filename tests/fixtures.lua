@@ -9,7 +9,12 @@ here: extend the copy from the game file instead.
 
 Weapons: AMCAR, CAR-4 (new_m4), M308 (new_m14), Judge, Grimm (basset), KSP
 (m249), Thanatos (m95), akimbo MP5 (x_mp5), Supernova (shell-by-shell reload),
-Contender (single-round clip) and the NPC fixture glock_17.
+Contender (single-round clip) and the NPC fixture glock_17. Glock 17 doubles as
+the pistol of the breakpoint cases.
+
+Enemy tables for the breakpoint maths: tweak_data.character entries for the six
+table units, tweak_data.weapon_disable_crit_for_damage, and the
+tweak_data.upgrades.values entries the bonus toggles read.
 
 Falloff templates, AMMO_PICKUP tables, reload/equip timers, spread and kick
 tables are the real 248.2 values; the distance maths itself lives in
@@ -169,6 +174,73 @@ Kept explicit per weapon below; the class constants are noted next to each.
 fixtures.tweak_data = {
 	-- lib/tweak_data/tweakdata.lua:373-382
 	difficulties = {'easy', 'normal', 'hard', 'overkill', 'overkill_145', 'easy_wish', 'overkill_290', 'sm_wish'},
+
+	--[[
+	The six enemy types the breakpoint table shows. Base (un-scaled) values as
+	CharacterTweakData builds them in `_init_*`; the game multiplies these in
+	place per difficulty, so tweak_data.character at runtime holds different
+	numbers. lua/core/breakpoints.lua therefore scales the base constants it
+	documents and only reads the non-scaled fields (tags, critical_hits,
+	ignore_headshot, damage.explosion_damage_mul, damage clamps) from here.
+	]]
+	character = {
+		-- lib/tweak_data/charactertweakdata.lua:425-462 (_init_swat)
+		swat = {
+			HEALTH_INIT = 8,          -- :433
+			headshot_dmg_mul = 2,     -- :434
+			tags = {'law'},           -- :427-429
+			damage = {explosion_damage_mul = 1}, -- presets.base :4302-4305
+		},
+		-- :464-506 (_init_heavy_swat)
+		heavy_swat = {
+			HEALTH_INIT = 16,         -- :472
+			headshot_dmg_mul = 2,     -- :473
+			tags = {'law'},           -- :466-468
+			damage = {explosion_damage_mul = 1}, -- :474
+		},
+		-- :617-655 (_init_sniper)
+		sniper = {
+			HEALTH_INIT = 4,          -- :627
+			headshot_dmg_mul = 2,     -- :628
+			tags = {'law', 'sniper', 'special'}, -- :619-623
+			damage = {explosion_damage_mul = 1}, -- presets.base :4305
+		},
+		-- :3388-3560 (_init_taser; tags :3388-3392)
+		taser = {
+			HEALTH_INIT = 30,         -- :3517
+			headshot_dmg_mul = 2,     -- :3518
+			tags = {'law', 'taser', 'special'},
+			damage = {explosion_damage_mul = 1}, -- presets.base :4305
+		},
+		-- :2945-3020 (_init_spooc)
+		spooc = {
+			HEALTH_INIT = 60,         -- :2955
+			headshot_dmg_mul = 6,     -- :2956
+			tags = {'law', 'spooc', 'special'}, -- :2947-2951
+			damage = {explosion_damage_mul = 1}, -- presets.base :4305
+		},
+		-- :2476-2942 (_init_tank)
+		tank = {
+			HEALTH_INIT = 200,        -- :2731
+			headshot_dmg_mul = 5,     -- :2732
+			tags = {'law', 'tank', 'special'}, -- :2478-2482
+			damage = {explosion_damage_mul = 2}, -- :2733
+			-- :2762-2764: snapshot of the base headshot multiplier, so it does NOT
+			-- follow the difficulty (see breakpoints.get_for_unit).
+			critical_hits = {damage_mul = 5},
+		},
+	},
+
+	-- lib/tweak_data/tweakdata.lua:2324-2414 (entries the crit check consults;
+	-- keys are the first weapon category / projectile id the game looks up).
+	weapon_disable_crit_for_damage = {
+		-- :2325-2328
+		frag = {explosion = false, fire = false},
+		-- :2337-2340
+		launcher_frag = {explosion = false, fire = false},
+		-- :2358-2361
+		wpn_gre_electric = {explosion = false, tase = false},
+	},
 
 	weapon = {
 		stats = {
@@ -937,6 +1009,15 @@ fixtures.tweak_data = {
 		},
 	},
 
+	-- lib/tweak_data/playertweakdata.lua:77-140 (fields a difficulty would rewrite
+	-- in place; the breakpoint maths reads the documented multipliers instead)
+	player = {
+		damage = {
+			-- :128-130 (easy_wish/overkill_290/sm_wish set it to 0.1: :36-38, :50-52, :64-66)
+			REVIVE_HEALTH_STEPS = {0.4},
+		},
+	},
+
 	-- lib/tweak_data/upgradestweakdata.lua:11209-11412 (weapon -> factory)
 	upgrades = {
 		-- :713-717 (the single/auto spread index branch)
@@ -954,6 +1035,47 @@ fixtures.tweak_data = {
 			supernova = {category = 'weapon', factory_id = 'wpn_fps_sho_supernova', weapon_id = 'supernova'},
 			contender = {category = 'weapon', factory_id = 'wpn_fps_pis_contender', weapon_id = 'contender'},
 		},
+
+		--[[
+		Upgrade values the breakpoint bonuses read. Each block cites the
+		upgradestweakdata.lua line it is copied from; the bonus toggles only ever
+		read these entries, never the definitions above.
+		]]
+		values = {
+			player = {
+				-- :229
+				marked_enemy_damage_mul = 1.15,
+				-- :1702-1707
+				marked_inc_dmg_distance = {{1000, 1.5}},
+				-- :595-597
+				melee_damage_health_ratio_multiplier = {2.5},
+				-- :598-600
+				damage_health_ratio_multiplier = {1},
+				-- :1061-1063
+				revived_health_regain = {1.4},
+			},
+			-- :508-513
+			temporary = {
+				dmg_multiplier_outnumbered = {{1.15, 7}},
+				-- :609-614
+				overkill_damage_multiplier = {{1.75, 20}},
+			},
+			-- :402-413
+			pistol = {
+				stacking_hit_damage_multiplier = {
+					{damage_bonus = 2.2, max_stacks = 1, max_time = 2},
+					{damage_bonus = 2.2, max_stacks = 1, max_time = 4},
+				},
+			},
+			-- :646-649
+			weapon = {
+				automatic_head_shot_add = {0.3, 0.9},
+				-- :791-793
+				passive_headshot_damage_multiplier = {1.25},
+			},
+		},
+		-- :601 (PlayerManager:get_damage_health_ratio threshold)
+		player_damage_health_ratio_threshold = 0.5,
 	},
 
 	-- lib/tweak_data/economytweakdata.lua:1722-1777
@@ -995,6 +1117,25 @@ fixtures.context = {
 	difficulty_rank = 7,
 	ducking = false,
 	steelsight = false,
+}
+
+--[[
+Player skill state for the bonus toggles: SkillTreeManager._global.skills as the
+context snapshot flattens it (lib/managers/skilltreemanager.lua:64; each entry is
+{ unlocked = level, total = max_level }). The skill ids are the real 248.2 ones
+that carry the toggles (lib/tweak_data/skilltreetweakdata.lua:645, :809, :1758,
+:1820, :1925, :1965, :2331); the levels stand for a player who owns all of them.
+A case that needs an unowned skill copies the table and sets that id to 0.
+]]
+fixtures.skills = {
+	prison_wife = 1,
+	hitman = 2,
+	underdog = 1,
+	overkill = 2,
+	body_expertise = 1,
+	backstab = 1,
+	trigger_happy = 2,
+	wolverine = 1,
 }
 
 -- Blueprints used by the mutation tests, on top of each weapon default:

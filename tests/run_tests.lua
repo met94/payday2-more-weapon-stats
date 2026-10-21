@@ -93,6 +93,7 @@ dofile(ModPath .. 'lua/entry.lua')
 local specs = {
 	'tests/weapon_spec.lua',
 	'tests/stats_spec.lua',
+	'tests/breakpoints_spec.lua',
 }
 
 for _, spec_path in ipairs(specs) do
