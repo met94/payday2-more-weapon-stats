@@ -49,8 +49,11 @@ would therefore yield nothing and the bootstrap would fail on the first module.
 Modules are loaded as chunks instead, and the return value is read from the
 call:
 
-	1. blt.vm.loadfile(path)                          SuperBLT loader, pcall'd
-	2. loadfile(path)                                 plain LuaJIT loader, pcall'd
+	1. blt.vm.loadfile(path)      SuperBLT's loader, pcall'd
+	2. loadfile(path)             plain LuaJIT loader, pcall'd; SuperBLT aliases
+	                              the global `loadfile` to blt.vm.loadfile, so
+	                              this branch only differs when `blt` is absent
+	                              (or its loader throws first)
 	3. io.open(path, 'rb') + loadstring(src, '@'..path)  last resort
 
 The chunk itself also runs under pcall, so a missing file, a syntax error or a
@@ -224,8 +227,14 @@ local function bootstrap()
 
 	MoreWeaponStats.compat = compat
 
-	-- Only reached when every module above loaded.
-	MoreWeaponStats.compat.init()
+	-- Only reached when every module above loaded. compat.init() hooks game
+	-- managers, so a throw there is as fatal as a bad module: pcall it and turn
+	-- the namespace off rather than let the error escape the lib/entry pre-hook.
+	local ok, init_err = pcall(MoreWeaponStats.compat.init)
+
+	if not ok then
+		disable('lua/compat.lua', 'compat.init failed: ' .. tostring(init_err))
+	end
 end
 
 bootstrap()

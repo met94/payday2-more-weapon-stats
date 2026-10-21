@@ -1,5 +1,5 @@
 --[[
-tests/loader_spec.lua — MoreWeaponStats:load_module and the inert hook path.
+tests/loader_spec.lua â€” MoreWeaponStats:load_module and the inert hook path.
 
 Why these cases exist: the in-game crash in v78 was `lua/entry.lua:81`
 ("module must return a table: lua/ui/stats_panel.lua"). Headless LuaJIT's
@@ -9,13 +9,17 @@ itself; these cases pin the loader order and the failure policy:
 
 	* blt.vm.loadfile is preferred when it exists (and gets the path);
 	* plain loadfile is the fallback when blt is absent, and also when the blt
-	  loader throws;
+	  loader throws (SuperBLT aliases the global `loadfile` to its own loader, so
+	  these are the same function in-game but different functions in the tests);
+	* io.open + loadstring is the last resort, with `load` when loadstring is
+	  absent;
 	* a missing path returns nil + an error naming the path, never throws;
 	* a chunk that throws returns nil + the error, never throws;
 	* a non-table chunk return is passed through for the caller's validation
 	  (entry.lua's bootstrap is what rejects it);
-	* the Black Market hook installs nothing while the namespace is disabled,
-	  and nothing when the chart module is missing.
+	* the Black Market hook installs nothing â€” not one method on either class â€”
+	  while the namespace is disabled, and nothing when the chart module is
+	  missing; SuperBLT's per-script load guard is cleared afterwards.
 
 Every stubbed global is restored with pcall, same pattern as tests/compat_spec.lua.
 ]]
@@ -40,6 +44,52 @@ local function with_globals(stubs, fn)
 	if not ok then
 		error(err, 0)
 	end
+end
+
+-- The full set of Black Market methods the hook file wraps or adds when it
+-- loads successfully. The inert cases below must see every one untouched.
+local GUI_METHODS = {
+	'_setup',
+	'close',
+	'_update_borders',
+	'set_info_text',
+	'update_info_text',
+	'show_btns',
+	'show_stats',
+	'mouse_pressed',
+	'mouse_moved',
+}
+
+local SLOT_ITEM_METHODS = { 'init', 'select', 'deselect' }
+
+-- Builds a stub class table whose methods are all distinguishable closures so
+-- a replaced method is caught by identity.
+local function stub_methods(names)
+	local subject = {}
+	local originals = {}
+
+	for _, name in ipairs(names) do
+		local fn = function() end
+
+		subject[name] = fn
+		originals[name] = fn
+	end
+
+	return subject, originals, #names
+end
+
+local function assert_untouched(t, label, subject, originals, expected_keys)
+	for name, fn in pairs(originals) do
+		t.assert_true(rawequal(subject[name], fn), label .. ' ' .. name .. ' untouched')
+	end
+
+	local count = 0
+
+	for _ in pairs(subject) do
+		count = count + 1
+	end
+
+	t.assert_equal(count, expected_keys, label .. ': no method added')
 end
 
 return function(t)
@@ -80,7 +130,7 @@ return function(t)
 
 	t.test('load_module falls back to loadfile without blt', function()
 		with_globals({
-			blt = nil,
+			blt = false,
 		}, function()
 			local module, err = load_module(MoreWeaponStats, ModPath .. 'lua/core/context.lua')
 
@@ -110,7 +160,7 @@ return function(t)
 
 	t.test('load_module returns nil and an error for a missing path', function()
 		with_globals({
-			blt = nil,
+			blt = false,
 		}, function()
 			local module, err = load_module(MoreWeaponStats, ModPath .. 'lua/this_file_does_not_exist.lua')
 
@@ -162,18 +212,102 @@ return function(t)
 		end)
 	end)
 
+	t.test('load_module reaches the io.open + loadstring branch', function()
+		local sentinel = {marker = 'loadstring module'}
+		local opened = {}
+		local source_seen
+		local chunk_name
+
+		with_globals({
+			-- `false` rather than nil: nil values vanish from a table literal, so
+			-- the key would not be stubbed at all.
+			blt = false,
+			loadfile = false,
+			io = {
+				open = function(path, mode)
+					opened.path = path
+					opened.mode = mode
+
+					return {
+						read = function(_, pattern)
+							opened.pattern = pattern
+
+							return 'return sentinel_source'
+						end,
+						close = function() end,
+					}
+				end,
+			},
+			loadstring = function(source, name)
+				source_seen = source
+				chunk_name = name
+
+				return function()
+					return sentinel
+				end
+			end,
+		}, function()
+			local module, err = load_module(MoreWeaponStats, 'mods/More Weapon Stats/lua/source_only.lua')
+
+			t.assert_nil(err, 'no error')
+			t.assert_true(rawequal(module, sentinel), 'the stubbed chunk table is returned')
+			t.assert_equal(opened.path, 'mods/More Weapon Stats/lua/source_only.lua', 'path passed to io.open')
+			t.assert_equal(opened.mode, 'rb', 'binary mode')
+			t.assert_equal(opened.pattern, '*a', 'whole file read')
+			t.assert_equal(source_seen, 'return sentinel_source', 'source forwarded to loadstring')
+			t.assert_equal(chunk_name, '@mods/More Weapon Stats/lua/source_only.lua', 'chunk name')
+		end)
+	end)
+
+	t.test('load_module uses load when loadstring is absent', function()
+		local sentinel = {marker = 'load module'}
+		local received_name
+
+		with_globals({
+			-- `false` rather than nil: nil values vanish from a table literal.
+			blt = false,
+			loadfile = false,
+			loadstring = false,
+			io = {
+				open = function()
+					return {
+						read = function()
+							return 'return sentinel'
+						end,
+						close = function() end,
+					}
+				end,
+			},
+			load = function(_, name)
+				received_name = name
+
+				return function()
+					return sentinel
+				end
+			end,
+		}, function()
+			local module, err = load_module(MoreWeaponStats, 'mods/More Weapon Stats/lua/load_only.lua')
+
+			t.assert_nil(err, 'no error')
+			t.assert_true(rawequal(module, sentinel), 'the stubbed chunk table is returned')
+			t.assert_equal(received_name, '@mods/More Weapon Stats/lua/load_only.lua', 'chunk name')
+		end)
+	end)
+
 	t.test('the Black Market hook stays inert while the namespace is disabled', function()
-		local setup = function() end
-		local gui = {_setup = setup}
+		local gui, gui_originals, gui_keys = stub_methods(GUI_METHODS)
+		local slot_item, slot_originals, slot_item_keys = stub_methods(SLOT_ITEM_METHODS)
 		local previous = MoreWeaponStats.disabled
+		local required_script = 'mws_loader_spec_disabled'
+		local guard_key = ModPath .. '\t' .. required_script
 
 		local ok, err = pcall(function()
 			MoreWeaponStats.disabled = true
 
 			with_globals({
-				RequiredScript = 'mws_loader_spec_disabled',
+				RequiredScript = required_script,
 				BlackMarketGui = gui,
-				BlackMarketGuiSlotItem = {},
+				BlackMarketGuiSlotItem = slot_item,
 			}, function()
 				-- dofile is the test runner's own loader; the mod never uses it.
 				dofile(ModPath .. 'lua/blackmarketgui.lua')
@@ -181,20 +315,25 @@ return function(t)
 		end)
 
 		MoreWeaponStats.disabled = previous
+		-- The hook writes SuperBLT's per-script guard before any early return.
+		_G[guard_key] = nil
 
 		if not ok then
 			error(err, 0)
 		end
 
-		t.assert_true(rawequal(gui._setup, setup), 'vanilla _setup untouched')
-		t.assert_nil(gui.show_stats, 'no MWS method installed')
+		assert_untouched(t, 'BlackMarketGui', gui, gui_originals, gui_keys)
+		assert_untouched(t, 'BlackMarketGuiSlotItem', slot_item, slot_originals, slot_item_keys)
 		t.assert_nil(gui.mws_context, 'no MWS helper installed')
+		t.assert_nil(rawget(_G, guard_key), 'no load guard left in _G')
 	end)
 
 	t.test('a missing chart module leaves the Black Market vanilla', function()
-		local setup = function() end
-		local gui = {_setup = setup}
+		local gui, gui_originals, gui_keys = stub_methods(GUI_METHODS)
+		local slot_item, slot_originals, slot_item_keys = stub_methods(SLOT_ITEM_METHODS)
 		local original = MoreWeaponStats.load_module
+		local required_script = 'mws_loader_spec_no_chart'
+		local guard_key = ModPath .. '\t' .. required_script
 
 		local ok, err = pcall(function()
 			MoreWeaponStats.load_module = function()
@@ -202,22 +341,25 @@ return function(t)
 			end
 
 			with_globals({
-				RequiredScript = 'mws_loader_spec_no_chart',
+				RequiredScript = required_script,
 				BlackMarketGui = gui,
-				BlackMarketGuiSlotItem = {},
+				BlackMarketGuiSlotItem = slot_item,
 			}, function()
 				dofile(ModPath .. 'lua/blackmarketgui.lua')
 			end)
 		end)
 
 		MoreWeaponStats.load_module = original
+		_G[guard_key] = nil
 
 		if not ok then
 			error(err, 0)
 		end
 
-		t.assert_true(rawequal(gui._setup, setup), 'vanilla _setup untouched')
-		t.assert_nil(gui.show_stats, 'no MWS method installed')
+		assert_untouched(t, 'BlackMarketGui', gui, gui_originals, gui_keys)
+		assert_untouched(t, 'BlackMarketGuiSlotItem', slot_item, slot_originals, slot_item_keys)
+		t.assert_nil(gui.mws_context, 'no MWS helper installed')
+		t.assert_nil(rawget(_G, guard_key), 'no load guard left in _G')
 		t.assert_true(rawequal(MoreWeaponStats.load_module, original), 'loader restored')
 	end)
 end

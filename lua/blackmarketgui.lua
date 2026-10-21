@@ -479,6 +479,8 @@ function BlackMarketGui:_setup(is_start_page, component_data)
 					log('[More Weapon Stats] range chart unavailable: ' .. tostring(chart))
 				end
 			end
+		else
+			log('[More Weapon Stats] range chart unavailable: no constructor')
 		end
 		self.mws_range_charts_floating_text = self.mws_range_charts_floating_text or self.mws_stances_panel:root():text({
 			layer = 100000000000,
