@@ -133,7 +133,7 @@ return function(t)
 		t.assert_equal(equipped._name_id, 'm4_crew', 'equipped model is the crew M4')
 		t.assert_equal(selected._name_id, 'm95_crew', 'selected model is the crew M95')
 
-		henchmen.refresh(gui, equipped, selected, {})
+		henchmen.refresh(gui, selected, equipped, {})
 
 		-- m4_crew: is_rifle, automatic (auto.fire_rate 0.1, autofire 6/11).
 		-- m95_crew: is_sniper, single-fire (cadence from FALLOFF at 1500 = 2/3).
@@ -151,7 +151,7 @@ return function(t)
 		local equipped = weapon.new_from_slot('new_m4', nil, { npc = true })
 		local selected = weapon.new_from_slot('m95', nil, { npc = true })
 
-		henchmen.refresh(gui, equipped, selected, {})
+		henchmen.refresh(gui, selected, equipped, {})
 
 		-- is_rifle at 4000: second range (r 10000, dmg_mul 2.5), 2.5 * 1.5 * 10.
 		-- is_sniper at 4000: fourth range (dmg_mul 5, acc 0.9/0.95), 5 * 22.5 * 10.
@@ -174,7 +174,7 @@ return function(t)
 
 		t.assert_equal(equipped._name_id, 'g17_crew', 'glock 17 maps to g17_crew')
 
-		henchmen.refresh(gui, equipped, selected, {})
+		henchmen.refresh(gui, selected, equipped, {})
 
 		-- is_pistol: no autofire rounds -> 60 / FALLOFF at 1500 (recoil[2] = 1).
 		-- is_rifle: automatic -> 60 / 0.1.
@@ -187,7 +187,7 @@ return function(t)
 		local gui = fake_gui()
 		local model = unknown_usage_model()
 
-		henchmen.refresh(gui, model, nil, {})
+		henchmen.refresh(gui, nil, model, {})
 
 		for _, name in ipairs(BASE_ROW_NAMES) do
 			t.assert_equal(cell_text(gui, name, 'a1'), '?', name .. ' a1')
@@ -266,7 +266,7 @@ return function(t)
 			end,
 		}
 
-		henchmen.refresh(gui, saw, model, {})
+		henchmen.refresh(gui, model, saw, {})
 
 		t.assert_equal(cell_text(gui, 'mws_spread', 'a1'), '', 'saw spread stays blank')
 		t.assert_equal(cell_text(gui, 'mws_spread', 'a2'), '25', 'selected spread still shown')

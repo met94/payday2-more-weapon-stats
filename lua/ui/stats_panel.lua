@@ -8,7 +8,7 @@ Responsibility:
 	formats them for the panels the GUI already built.
 
 Public API:
-	stats_panel.rows(gui, options) -> table
+	stats_panel.rows() -> table
 		The normal weapon row descriptors in the v76 display order:
 		reload partial/full, equip delay, ammo pickup, recoil horizontal/vertical,
 		spread horizontal/vertical and damage falloff. Each descriptor keeps the
@@ -19,21 +19,16 @@ Public API:
 		The settings.display filter for one descriptor. A missing key means
 		visible, exactly like the v76 `~= false` comparison.
 
-	stats_panel.init(gui)
-		Reconciles the row state on the GUI. It never builds panels; `_setup`
-		stores the rows it got from stats_panel.rows.
-
 	stats_panel.refresh(gui, selected, equipped, context)
 		Re-renders every row that has a panel. `selected` is the slot being
 		viewed (the right/total column, cells a2/b2); `equipped` is the currently
 		equipped weapon (the left/equip column, cells a1/b1), matching how the
 		v76 adapter filled those columns. All stale cells are blanked first, and
-		a nil model leaves its column empty instead of raising.
+		a nil model leaves its column empty instead of raising. The
+		menu_seconds_suffix_short localization is resolved once per refresh and
+		shared by every timing cell.
 
-	stats_panel.clear(gui)
-		Blanks every cell in gui.mws_stats_texts.
-
-The row functions receive (model, index, txts, context) and only touch
+The row functions receive (model, index, txts, context, suffix) and only touch
 MoreWeaponStats.core, the gui's text cells and localization. They never create a
 unit, a weapon class or a manager stub.
 ]]
@@ -84,7 +79,7 @@ end
 
 -- Row renderers --------------------------------------------------------------
 
-local function render_reload_full(model, index, txts, context)
+local function render_reload_full(model, index, txts, context, suffix)
 	local timers = core() and core().timers
 	local seconds = model and timers and timers.reload_full(model, 0, context)
 
@@ -93,41 +88,54 @@ local function render_reload_full(model, index, txts, context)
 		return
 	end
 
-	set_text(txts, 'a' .. index, ('%.2f%s'):format(seconds, seconds_suffix()))
+	set_text(txts, 'a' .. index, ('%.2f%s'):format(seconds, suffix or seconds_suffix()))
 end
 
-local function render_reload_partial(model, index, txts, context)
+local function render_reload_partial(model, index, txts, context, suffix)
 	local timers = core() and core().timers
-	local partial, single_shell = model and timers and timers.reload_partial(model, 1, context)
+	local partial, single_shell
+
+	if model and timers then
+		partial, single_shell = timers.reload_partial(model, 1, context)
+	end
 
 	if not partial then
 		blank_column(txts, index)
 		return
 	end
 
-	local suffix = seconds_suffix()
+	suffix = suffix or seconds_suffix()
 	local shell = single_shell or partial
 
 	set_text(txts, 'a' .. index, ('%.2f%s'):format(partial, suffix))
 	set_text(txts, 'b' .. index, (partial == shell and '' or ' | %.2f%s'):format(shell, suffix))
 end
 
-local function render_equip_delay(model, index, txts, context)
+local function render_equip_delay(model, index, txts, context, suffix)
 	local timers = core() and core().timers
-	local equip, unequip = model and timers and timers.equip_delay(model, context)
+	local equip, unequip
+
+	if model and timers then
+		equip, unequip = timers.equip_delay(model, context)
+	end
 
 	if not equip then
 		blank_column(txts, index)
 		return
 	end
 
-	set_text(txts, 'a' .. index, ('%.2fs'):format(equip))
-	set_text(txts, 'b' .. index, (' | %.2fs'):format(unequip or equip))
+	suffix = suffix or seconds_suffix()
+	set_text(txts, 'a' .. index, ('%.2f%s'):format(equip, suffix))
+	set_text(txts, 'b' .. index, (' | %.2f%s'):format(unequip or equip, suffix))
 end
 
 local function render_ammo_pickup(model, index, txts, context)
 	local ammo = core() and core().ammo
-	local near, far = model and ammo and ammo.ammo_pickup(model, context)
+	local near, far
+
+	if model and ammo then
+		near, far = ammo.ammo_pickup(model, context)
+	end
 
 	if not near then
 		blank_column(txts, index)
@@ -140,7 +148,11 @@ end
 
 local function render_recoil_horiz(model, index, txts, context)
 	local accuracy = core() and core().accuracy
-	local left, right = model and accuracy and accuracy.recoil_horizontal(model, context)
+	local left, right
+
+	if model and accuracy then
+		left, right = accuracy.recoil_horizontal(model, context)
+	end
 
 	if not left then
 		blank_column(txts, index)
@@ -153,7 +165,11 @@ end
 
 local function render_recoil_vert(model, index, txts, context)
 	local accuracy = core() and core().accuracy
-	local up, down = model and accuracy and accuracy.recoil_vertical(model, context)
+	local up, down
+
+	if model and accuracy then
+		up, down = accuracy.recoil_vertical(model, context)
+	end
 
 	if not up then
 		blank_column(txts, index)
@@ -176,7 +192,11 @@ local function render_spread_horiz(model, index, txts, context)
 	end
 
 	local accuracy = core() and core().accuracy
-	local standing, moving = accuracy and accuracy.spread_horizontal(model, context)
+	local standing, moving
+
+	if accuracy then
+		standing, moving = accuracy.spread_horizontal(model, context)
+	end
 
 	if not standing then
 		blank_column(txts, index)
@@ -199,7 +219,11 @@ local function render_spread_vert(model, index, txts, context)
 	end
 
 	local accuracy = core() and core().accuracy
-	local standing, moving = accuracy and accuracy.spread_vertical(model, context)
+	local standing, moving
+
+	if accuracy then
+		standing, moving = accuracy.spread_vertical(model, context)
+	end
 
 	if not standing then
 		blank_column(txts, index)
@@ -269,9 +293,7 @@ local ROW_DEFINITIONS = {
 
 -- Public API ----------------------------------------------------------------
 
-function stats_panel.rows(gui, options)
-	-- gui/options are accepted for the adapter's call shape; the rows only need
-	-- the shared core modules and the per-render context.
+function stats_panel.rows()
 	local rows = {}
 
 	for index, definition in ipairs(ROW_DEFINITIONS) do
@@ -300,16 +322,6 @@ function stats_panel.visible(stat)
 	return display[stat.name:sub(5, -1)] ~= false
 end
 
-function stats_panel.init(gui)
-	if type(gui) ~= 'table' then
-		return
-	end
-
-	if gui.mws_stats_shown == nil then
-		gui.mws_stats_shown = stats_panel.rows(gui)
-	end
-end
-
 function stats_panel.refresh(gui, selected, equipped, context)
 	if type(gui) ~= 'table' then
 		return
@@ -321,7 +333,9 @@ function stats_panel.refresh(gui, selected, equipped, context)
 		return
 	end
 
-	local rows = gui.mws_stats_shown or stats_panel.rows(gui)
+	local rows = gui.mws_stats_shown or stats_panel.rows()
+	-- One localization lookup per refresh, not one per timing cell.
+	local suffix = seconds_suffix()
 
 	for _, stat in ipairs(rows) do
 		local text_name = stat.text_name or stat.name
@@ -332,27 +346,13 @@ function stats_panel.refresh(gui, selected, equipped, context)
 
 			if type(stat.fct) == 'function' and stats_panel.visible(stat) then
 				if equipped then
-					stat.fct(equipped, '1', txts, context)
+					stat.fct(equipped, '1', txts, context, suffix)
 				end
 
 				if selected then
-					stat.fct(selected, '2', txts, context)
+					stat.fct(selected, '2', txts, context, suffix)
 				end
 			end
-		end
-	end
-end
-
-function stats_panel.clear(gui)
-	local texts = type(gui) == 'table' and gui.mws_stats_texts or nil
-
-	if type(texts) ~= 'table' then
-		return
-	end
-
-	for _, txts in pairs(texts) do
-		if type(txts) == 'table' then
-			blank_row(txts)
 		end
 	end
 end

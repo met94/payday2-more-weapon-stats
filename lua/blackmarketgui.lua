@@ -318,7 +318,7 @@ function BlackMarketGui:_setup(is_start_page, component_data)
 		if _henchmen_weapon then
 			self.mws_stats_shown = MoreWeaponStats.ui.henchmen.rows(self)
 		else
-			self.mws_stats_shown = MoreWeaponStats.ui.stats_panel.rows(self)
+			self.mws_stats_shown = MoreWeaponStats.ui.stats_panel.rows()
 		end
 
 		text_columns = {
@@ -675,7 +675,9 @@ function BlackMarketGui:_show_stats()
 				local ballistics = core and core.ballistics
 
 				local function update_bars(wbase, chart)
-					local weapon_tweak = wbase and wbase:weapon_tweak_data()
+					local weapon_tweak = wbase
+						and type(wbase.weapon_tweak_data) == 'function'
+						and wbase:weapon_tweak_data()
 
 					if ballistics
 						and wbase
@@ -783,7 +785,7 @@ function BlackMarketGui:_show_stats()
 		end
 
 		if self.mws_stats_texts then
-			MoreWeaponStats.ui.henchmen.refresh(self, wbase_equipped, wbase_selected, context)
+			MoreWeaponStats.ui.henchmen.refresh(self, wbase_selected, wbase_equipped, context)
 		end
 	end
 end

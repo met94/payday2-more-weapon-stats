@@ -560,8 +560,17 @@ return function(t)
 		t.assert_nil(MoreWeaponStats.core.accuracy.spread_horizontal(unknown, ctx), 'unknown weapon spread')
 	end)
 
-	t.test('ui modules expose the init/refresh seam', function()
-		for _, name in ipairs({'stats_panel', 'breakpoints_panel', 'melee', 'henchmen'}) do
+	t.test('ui modules expose the stat/refresh seam', function()
+		-- stats_panel has no per-page state to reconcile, so `_setup` stores the
+		-- rows from stats_panel.rows() directly; the other adapters keep a no-op
+		-- init seam.
+		local stats_panel = MoreWeaponStats.ui.stats_panel
+		t.assert_type(stats_panel.rows, 'function', 'ui.stats_panel.rows')
+		t.assert_type(stats_panel.refresh, 'function', 'ui.stats_panel.refresh')
+		t.assert_type(stats_panel.visible, 'function', 'ui.stats_panel.visible')
+		t.assert_nil(stats_panel.init, 'stats_panel has no dead init seam')
+
+		for _, name in ipairs({'breakpoints_panel', 'melee', 'henchmen'}) do
 			local module = MoreWeaponStats.ui[name]
 			t.assert_type(module.init, 'function', 'ui.' .. name .. '.init')
 			t.assert_type(module.refresh, 'function', 'ui.' .. name .. '.refresh')

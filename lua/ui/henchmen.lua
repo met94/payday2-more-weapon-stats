@@ -18,11 +18,12 @@ Public API:
 		mws_damage_hitchance_<d>, macros { DIS = d / 100 } and a callback that
 		carries its own distance.
 
-	henchmen.refresh(gui, equipped, selected, context)
-		Re-renders every henchman row that has a panel. `equipped` fills the left
-		column (cells a1/b1) and `selected` the right column (a2/b2), matching
-		the v76 adapter. Cells are blanked first; a nil model or an unknown
-		weapon usage shows the v76 '?' fallback instead of raising.
+	henchmen.refresh(gui, selected, equipped, context)
+		Re-renders every henchman row that has a panel. `selected` fills the
+		right column (cells a2/b2) and `equipped` the left column (a1/b1), the
+		same argument order as ui/stats_panel and ui/melee. Cells are blanked
+		first; a nil model or an unknown weapon usage shows the v76 '?' fallback
+		instead of raising.
 
 	The rows are data-only: `weapon_tweak_data()` must return the crew entry and
 	`_damage` must hold the NPC damage, which is what the NPC model exposes.
@@ -335,7 +336,7 @@ function henchmen.rows(gui)
 	return rows
 end
 
-function henchmen.refresh(gui, equipped, selected, context)
+function henchmen.refresh(gui, selected, equipped, context)
 	if type(gui) ~= 'table' then
 		return
 	end
