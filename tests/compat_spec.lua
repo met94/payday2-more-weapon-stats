@@ -29,6 +29,7 @@ if rawget(_G, 'tweak_data') == nil then
 end
 
 local compat = MoreWeaponStats.compat
+local context = MoreWeaponStats.core.context
 local weapon = MoreWeaponStats.core.weapon
 
 -- Runs fn with temporary globals, restoring every previous value afterwards.
@@ -323,6 +324,22 @@ return function(t)
 		if not ok then
 			error(err, 0)
 		end
+	end)
+
+	t.test('a table-valued colour-skin bonus is ignored, not arithmetic', function()
+		-- The Fixes strips `cosmetics.bonus` when it is a table (weapon colour
+		-- skins) because the vanilla stats path would do arithmetic on it. MWS
+		-- does not call that wrapper, so its own model must tolerate the value.
+		context.invalidate()
+
+		local model = weapon.new_from_slot('new_m4', nil, {
+			cosmetics = {id = 'new_m4_goldstripes', bonus = {some = 'table'}},
+		})
+
+		t.assert_type(model, 'table', 'model still builds')
+		t.assert_equal(model:concealment(), 20, 'the table bonus adds nothing')
+
+		context.invalidate()
 	end)
 
 	t.test('compat.init is idempotent and touches no manager or global', function()

@@ -42,7 +42,10 @@ Verified against the live mods in
 		Wraps BlackMarketManager:_get_weapon_stats (strips `cosmetics.bonus`
 		for color skins) and reads Global.game_settings.difficulty. MWS reads
 		the crafted table and the difficulty but never writes either, so the
-		Fixes' wrappers and reads stay authoritative.
+		Fixes' reads stay authoritative. MWS does not call that wrapper; its
+		own model treats `cosmetics.bonus` as a lookup key, so a colour skin's
+		table-valued bonus resolves to no bonus instead of reaching the
+		arithmetic crash the Fixes wrapper guards against.
 
 	Anticrash v23 (priority 500, hooks weaponfactorymanager and menumanager)
 		Sanitizes blueprints in WeaponFactoryManager:unpack_blueprint_from_string
