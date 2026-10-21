@@ -1,9 +1,7 @@
 local key = ModPath .. '	' .. RequiredScript
 if _G[key] then return else _G[key] = true end
 
-dofile(ModPath .. 'lua/_breakpoints.lua')
 local SimpleChart = dofile(ModPath .. 'lua/_chart.lua')
-local DifficultyPicker = dofile(ModPath .. 'lua/_difficulty_picker.lua')
 
 DB:create_entry(
 	Idstring('texture'),
@@ -147,6 +145,32 @@ function BlackMarketGui:mws_context()
 		steelsight = not not self.mws_in_steelsight,
 		deployed = not not self.mws_deployed,
 	})
+end
+
+function BlackMarketGui:mws_set_bonus_availability()
+	local ui = MoreWeaponStats and MoreWeaponStats.ui
+	local breakpoints_panel = ui and ui.breakpoints_panel
+
+	if not breakpoints_panel then
+		return
+	end
+
+	breakpoints_panel.sync_bonuses(self, self:mws_context())
+end
+
+function BlackMarketGui:mws_update_breakpoints()
+	self:_mws_update_breakpoints()
+end
+
+function BlackMarketGui:_mws_update_breakpoints()
+	local ui = MoreWeaponStats and MoreWeaponStats.ui
+	local breakpoints_panel = ui and ui.breakpoints_panel
+
+	if not breakpoints_panel then
+		return
+	end
+
+	breakpoints_panel.refresh(self, self:mws_context())
 end
 
 local mws_original_blackmarketgui_updateinfotext = BlackMarketGui.update_info_text
@@ -478,166 +502,8 @@ function BlackMarketGui:_setup(is_start_page, component_data)
 			preview_btn._pc_btn = nil
 		end
 
-		-- show/hide breakpoints buttons
-		self.mws_bp_switch_panel = self._panel:panel({
-			w = self._buttons:w(),
-			h = 30,
-		})
-		self.mws_bp_switch_panel:set_bottom(self._weapon_info_panel:y() + 2)
-		self.mws_bp_switch_panel:set_right(self._panel:w())
-
-		local prio = self.si_extra_button_added and 2 or 1
-		local btn_data = {
-			prio = prio,
-			name = 'mws_bp_show',
-			pc_btn = 'menu_preview_item',
-			callback = callback(self, self, 'mws_bp_show_callback')
-		}
-		self.mws_bp_show_btn = BlackMarketGuiButtonItem:new(self.mws_bp_switch_panel, btn_data, 10)
-		self.mws_bp_show_btn._data.prio = 5 -- ugly trick for double-click
-		self._btns['mws_bp_show'] = self.mws_bp_show_btn
-
-		btn_data = {
-			prio = prio,
-			name = 'mws_bp_hide',
-			pc_btn = 'menu_preview_item',
-			callback = callback(self, self, 'mws_bp_hide_callback')
-		}
-		self.mws_bp_hide_btn = BlackMarketGuiButtonItem:new(self.mws_bp_switch_panel, btn_data, 10)
-		self.mws_bp_hide_btn._data.prio = 5
-		self._btns['mws_bp_hide'] = self.mws_bp_hide_btn
-
-		self:show_btns(self._selected_slot)
-
-		-- breakpoints
-		self.mws_bp_panel = self._weapon_info_panel:panel({
-			visible = false,
-			y = 58,
-			x = 10,
-			layer = 1,
-			w = self._weapon_info_panel:w() - 20,
-			h = self._weapon_info_panel:h() - 84
-		})
-
-		-- checkable bonuses
-		self.mws_bp_bonus_panel = self.mws_bp_panel:panel({
-			y = 0,
-			x = 0,
-			layer = 1,
-			w = 200,
-			h = 40
-		})
-
-		local max_x = 0
-		local bonus_dim = 32
-		self.mws_bp_skill_bitmaps = {}
-		for skill_name, bonus in pairs(self.mws_bonuses) do
-			local icon_xy = tweak_data.skilltree.skills[skill_name].icon_xy
-			max_x = math.max(max_x, bonus.x * bonus_dim)
-			self.mws_bp_skill_bitmaps[bonus.index] = self.mws_bp_bonus_panel:bitmap({
-				x = bonus.x * bonus_dim,
-				y = 0,
-				texture = 'guis/textures/pd2/skilltree_2/icons_atlas_2',
-				name = skill_name,
-				blend_mode = 'add',
-				layer = 1,
-				texture_rect = {
-					icon_xy[1] * 80,
-					icon_xy[2] * 80,
-					80,
-					80
-				},
-				w = bonus_dim,
-				h = bonus_dim,
-				alpha = not bonus.available and self.mws_alpha_unavailable or bonus.checked and self.mws_alpha_enabled or self.mws_alpha_disabled
-			})
-		end
-		self.mws_bp_bonus_panel:set_w(max_x + bonus_dim)
-		self.mws_bp_bonus_panel:set_center_x(self.mws_bp_panel:w() / 2)
-
-		-- unit names
-		local col_width = 38
-		self.mws_bp_unit_texts = {}
-		local h = self.mws_bp_panel:h() - 10
-		for i, unit_name in ipairs(self.mws_unit_types) do
-			local txt = self.mws_bp_panel:text({
-				vertical = 'center',
-				align = 'right',
-				text = managers.localization:text('mws_bp_option_' .. unit_name),
-				font_size = tweak_data.menu.pd2_small_font_size,
-				font = tweak_data.menu.pd2_small_font,
-				color = tweak_data.screen_colors.text:with_alpha(0.3 + i * 0.06),
-				x = i * col_width - 32,
-				y = h - 60,
-				w = 100,
-				h = 30
-			})
-			txt:rotate(-45)
-			self.mws_bp_unit_texts[i] = txt
-		end
-
-		-- cells
-		self.mws_bp_damage = {}
-		self.mws_bp_bullet = {}
-		local row_max = math.floor(self.mws_bp_unit_texts[1]:top() / 20) - 2
-		local nr = 0
-		for i = 2, row_max do
-			local y = i * 20
-			local panel = self.mws_bp_panel:panel({
-				layer = 1,
-				x = 0,
-				y = y,
-				w = self.mws_bp_panel:w(),
-				h = 20
-			})
-			if i % 2 == 0 then
-				panel:rect({
-					color = Color.black:with_alpha(0.3)
-				})
-			end
-
-			self.mws_bp_damage[i - 1] = self.mws_bp_panel:text({
-				name = 'mws_bp_damage_' .. tostring(i - 1),
-				layer = 2,
-				align = 'right',
-				vertical = 'center',
-				font_size = tweak_data.menu.pd2_small_font_size,
-				font = tweak_data.menu.pd2_small_font,
-				text = '?',
-				x = 0,
-				y = y,
-				w = 60,
-				h = 20,
-				color = Color.white,
-			})
-
-			for j = 1, 6 do
-				nr = nr + 1
-				self.mws_bp_bullet[nr] = self.mws_bp_panel:text({
-					name = 'mws_bp_bullet_' .. tostring(i - 1) .. '_' .. self.mws_unit_types[j],
-					layer = 2,
-					align = 'center',
-					vertical = 'center',
-					font_size = tweak_data.menu.pd2_small_font_size,
-					font = tweak_data.menu.pd2_small_font,
-					text = '-',
-					x = 80 + (j - 1) * col_width,
-					y = y,
-					w = 25,
-					h = 20,
-					color = Color.white,
-					alpha = 1
-				})
-			end
-		end
-
-		-- difficulty
-		self.mws_difficulty_picker = DifficultyPicker:new(self.mws_bp_panel)
-		self.mws_difficulty_picker:update_difficulty()
-
-		if self.mws_breakpoints then
-			self:mws_update_breakpoints()
-		end
+		-- breakpoint table, bonus toggles and difficulty picker
+		MoreWeaponStats.ui.breakpoints_panel.init(self)
 	end
 
 	if self.mws_stats_shown then
@@ -688,6 +554,95 @@ function BlackMarketGui:mws_bp_hide_callback(data)
 	end
 end
 
+-- Mouse interaction for the breakpoint panel: the difficulty picker and the
+-- bonus toggles delegate to ui/breakpoints_panel. The stance and range-chart
+-- branches are the v76 ones, unchanged.
+local mws_original_blackmarketgui_mousepressed = BlackMarketGui.mouse_pressed
+function BlackMarketGui:mouse_pressed(button, x, y)
+	if self._enabled and not self._renaming_item and button == Idstring('0') then
+		local ui = MoreWeaponStats and MoreWeaponStats.ui
+		local breakpoints_panel = ui and ui.breakpoints_panel
+
+		if self.mws_breakpoints then
+			if breakpoints_panel and self.mws_bp_panel and self.mws_bp_panel:inside(x, y) then
+				local difficulty_rank = breakpoints_panel.difficulty_at(self, x, y)
+
+				if difficulty_rank then
+					breakpoints_panel.set_difficulty(self, breakpoints_panel.difficulty_name(difficulty_rank), true)
+					self:mws_update_breakpoints()
+				end
+
+				local bonus = breakpoints_panel.bonus_at(self, x, y)
+
+				if bonus then
+					breakpoints_panel.click_bonus(self, bonus)
+					self:mws_update_breakpoints()
+				end
+			end
+
+		elseif self.mws_stances_panel then
+			if self.mws_stances_panel:inside(x, y) then
+				if self.mws_stances_bitmaps[1]:inside(x, y) then
+					self.mws_in_steelsight = not self.mws_in_steelsight
+					self.mws_stances_bitmaps[1]:set_visible(not self.mws_in_steelsight)
+					self.mws_stances_bitmaps[2]:set_visible(self.mws_in_steelsight)
+					self:show_stats()
+				elseif self.mws_stances_bitmaps[3]:inside(x, y) then
+					self.mws_ducking = not self.mws_ducking
+					self.mws_stances_bitmaps[3]:set_visible(not self.mws_ducking)
+					self.mws_stances_bitmaps[4]:set_visible(self.mws_ducking)
+					self:show_stats()
+				end
+			end
+		end
+	end
+
+	return mws_original_blackmarketgui_mousepressed(self, button, x, y)
+end
+
+local mws_original_blackmarketgui_mousemoved = BlackMarketGui.mouse_moved
+function BlackMarketGui:mouse_moved(o, x, y)
+	if self._enabled and not self._renaming_item then
+		local ui = MoreWeaponStats and MoreWeaponStats.ui
+		local breakpoints_panel = ui and ui.breakpoints_panel
+
+		if self.mws_breakpoints then
+			if breakpoints_panel and self.mws_bp_panel and self.mws_bp_panel:inside(x, y) then
+				if breakpoints_panel.difficulty_at(self, x, y) then
+					return true, 'link'
+				end
+
+				if breakpoints_panel.bonus_at(self, x, y) then
+					return true, 'link'
+				end
+			end
+
+		elseif self.mws_stances_panel then
+			if self.mws_range_charts then
+				self.mws_range_charts_floating_text:hide()
+				for _, chart in ipairs(self.mws_range_charts) do
+					local txt = chart:visible() and chart:get_text_at(x, y)
+					if txt then
+						self.mws_range_charts_floating_text:show()
+						self.mws_range_charts_floating_text:set_text(txt)
+						self.mws_range_charts_floating_text:set_world_right(x)
+						self.mws_range_charts_floating_text:set_world_top(y + 15)
+						return true
+					end
+				end
+			end
+
+			if self.mws_stances_panel:inside(x, y) then
+				if self.mws_stances_bitmaps[1]:inside(x, y) or self.mws_stances_bitmaps[3]:inside(x, y) then
+					return true, 'link'
+				end
+			end
+		end
+	end
+
+	return mws_original_blackmarketgui_mousemoved(self, o, x, y)
+end
+
 local function mws_pcall(what, fct)
 	local ok, err = pcall(fct)
 	if not ok then
@@ -726,10 +681,14 @@ function BlackMarketGui:_show_stats()
 	local context = self:mws_context()
 
 	-- breakpoints
-	MoreWeaponStats.mws_slot_data = slot_data
 	if self.mws_breakpoints then
 		self._stats_panel:hide()
-		self:mws_update_breakpoints()
+
+		local breakpoints_panel = MoreWeaponStats.ui.breakpoints_panel
+
+		if breakpoints_panel then
+			breakpoints_panel.refresh(self, context)
+		end
 	end
 
 	-- melee
