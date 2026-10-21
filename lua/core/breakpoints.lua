@@ -33,6 +33,8 @@ Public API:
 		clicks_per_second and enable_trigger_happy_for_first_bullet (the mod
 		settings are the default).
 	breakpoints.get_for_unit(unit_type, params, difficulty) -> { [hit_nr] = damage }
+		`difficulty` is optional: nil means "the difficulty the params were
+		captured under" (params.context.difficulty), then neutral multipliers.
 	breakpoints.get_all(params, difficulty) -> unit_type -> breakpoint table
 	breakpoints.consolidate(data, damage, amount_wanted, fill) -> ref_damage, list
 		Merges the per-unit tables into the table the UI draws; `fill` is the
@@ -54,7 +56,8 @@ actually running.
 
 Engine-only terms (documented, not modelled):
 	* explosion damage disabled by a mutator (`managers.modifiers` zeroing
-	  CopDamage:DamageExplosion) arrives as params.explosion_blocked;
+	  CopDamage:DamageExplosion) arrives as `options.explosion_blocked` and
+	  makes the explosion table empty;
 	* a weapon with no fire interval (crew/NPC models) cannot place the
 	  trigger-happy stacks and simply skips that bonus;
 	* crime-spree health modifiers are not applied: they are runtime state, and
@@ -328,14 +331,24 @@ local function marked_inc_dmg_distance_mul()
 	return 1
 end
 
--- Skill unlock levels --------------------------------------------------------
-
 --[[
+Skill unlock levels ----------------------------------------------------------
+
 SkillTreeManager._global.skills entries are `{ unlocked = level, total = max }`
 (lib/managers/skilltreemanager.lua:64); the context snapshot flattens them to
-skill id -> unlocked level. Read-only: nothing is written back.
+skill id -> unlocked level. The context answers first (it owns the manager read),
+a hand-built context table falls back to its `skills` field, and a headless run
+falls back to the manager itself. Read-only: nothing is written back.
 ]]
 function breakpoints.skill_level(context, skill_name)
+	if context and type(context.skill_level) == 'function' then
+		local level = context:skill_level(skill_name)
+
+		if type(level) == 'number' then
+			return level
+		end
+	end
+
 	local skills = context and context.skills
 	local level = type(skills) == 'table' and skills[skill_name] or nil
 
@@ -487,8 +500,9 @@ into the parameter table the maths reads.
 	crits / trigger_happy / berserker / shoot_interval / primary_category
 	context / trigger_happy_first_bullet
 
-`explosion_blocked` is left for the caller (crime-spree modifiers and similar
-mutators blanket-disable explosion damage; the table treats it as enabled).
+`explosion_blocked` carries the "explosion damage disabled for this unit"
+mutator state (v76 asked `managers.modifiers:modify_value(
+"CopDamage:DamageExplosion", ...)`); the caller sets it through `options`.
 ]]
 function breakpoints.prepare_params(weapon, context, bonuses, options)
 	if type(weapon) ~= 'table' then
@@ -574,6 +588,8 @@ function breakpoints.prepare_params(weapon, context, bonuses, options)
 		-- v76 read this setting inside the maths; passing it through the params
 		-- keeps the module free of globals and lets a caller preview both modes.
 		trigger_happy_first_bullet = first_bullet ~= false,
+		-- v76 asked managers.modifiers per unit; the caller supplies the flag.
+		explosion_blocked = options.explosion_blocked and true or false,
 	}
 
 	if explosion then
@@ -681,6 +697,16 @@ function breakpoints.get_for_unit(unit_type, params, difficulty)
 
 	if type(params) ~= 'table' then
 		return result
+	end
+
+	--[[
+	The UI selects a difficulty explicitly; when it does not, the context's own
+	difficulty is the honest answer. Falling straight through to the neutral
+	1x/1x snapshot would render normal-difficulty numbers while the player is
+	on Death Sentence.
+	]]
+	if difficulty == nil and type(params.context) == 'table' then
+		difficulty = params.context.difficulty
 	end
 
 	local data = breakpoints.character_data(unit_type, difficulty)
