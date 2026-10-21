@@ -561,19 +561,23 @@ return function(t)
 	end)
 
 	t.test('ui modules expose the stat/refresh seam', function()
-		-- stats_panel has no per-page state to reconcile, so `_setup` stores the
-		-- rows from stats_panel.rows() directly; the other adapters keep a no-op
-		-- init seam.
+		-- stats_panel has no per-page state and melee/henchmen build rows in
+		-- `_setup`; only breakpoints_panel owns widget-tree state, so it is the
+		-- only adapter with an init seam.
 		local stats_panel = MoreWeaponStats.ui.stats_panel
 		t.assert_type(stats_panel.rows, 'function', 'ui.stats_panel.rows')
 		t.assert_type(stats_panel.refresh, 'function', 'ui.stats_panel.refresh')
 		t.assert_type(stats_panel.visible, 'function', 'ui.stats_panel.visible')
 		t.assert_nil(stats_panel.init, 'stats_panel has no dead init seam')
 
-		for _, name in ipairs({'breakpoints_panel', 'melee', 'henchmen'}) do
+		for _, name in ipairs({'melee', 'henchmen'}) do
 			local module = MoreWeaponStats.ui[name]
-			t.assert_type(module.init, 'function', 'ui.' .. name .. '.init')
+			t.assert_type(module.rows, 'function', 'ui.' .. name .. '.rows')
 			t.assert_type(module.refresh, 'function', 'ui.' .. name .. '.refresh')
+			t.assert_nil(module.init, 'ui.' .. name .. ' has no dead init seam')
 		end
+
+		t.assert_type(MoreWeaponStats.ui.breakpoints_panel.init, 'function', 'ui.breakpoints_panel.init')
+		t.assert_type(MoreWeaponStats.ui.breakpoints_panel.refresh, 'function', 'ui.breakpoints_panel.refresh')
 	end)
 end

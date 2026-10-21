@@ -312,13 +312,6 @@ end
 
 -- Public API ----------------------------------------------------------------
 
---[[
-Kept for the module seam the entry bootstrap test checks: the GUI builds the
-panels from rows(), so there is no per-page state to reconcile here.
-]]
-function henchmen.init(gui)
-end
-
 function henchmen.rows(gui)
 	local rows = {}
 

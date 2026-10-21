@@ -29,7 +29,8 @@ Public API:
 
 local melee = {}
 
--- v76 display order (blackmarketgui.lua at the v76 baseline).
+-- v76 display order (blackmarketgui.lua at the v76 baseline). No init seam:
+-- `_setup` builds the panels from rows() and `_show_stats` renders them.
 local ROW_NAMES = {
 	'mws_attack_delay',
 	'mws_cooldown',
@@ -183,13 +184,6 @@ local function value_for(stat_name, data)
 end
 
 -- Public API ----------------------------------------------------------------
-
---[[
-Kept for the module seam the entry bootstrap test checks: the GUI builds the
-panels from rows(), so there is no per-page state to reconcile here.
-]]
-function melee.init(gui)
-end
 
 function melee.rows(gui)
 	local rows = {}
