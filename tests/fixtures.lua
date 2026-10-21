@@ -161,7 +161,8 @@ fixtures.tweak_data = {
 			},
 		},
 
-		-- lib/tweak_data/weapontweakdata.lua:10206-10305 (Judge)
+		-- lib/tweak_data/weapontweakdata.lua:10206-10305 (Judge). 248.2 sets no
+		-- CAN_TOGGLE_FIREMODE on judge (only x_judge sets it, to false).
 		judge = {
 			categories = {'shotgun'},
 			upgrade_blocks = {weapon = {'clip_ammo_increase'}},
@@ -174,7 +175,6 @@ fixtures.tweak_data = {
 			FIRE_MODE = 'single',
 			fire_mode_data = {fire_rate = 0.12},
 			single = {fire_rate = 0.21},
-			CAN_TOGGLE_FIREMODE = true,
 			stats = {
 				alert_size = 7, concealment = 29, damage = 155, extra_ammo = 51,
 				recoil = 8, reload = 11, spread = 14, spread_moving = 14,
@@ -278,9 +278,34 @@ fixtures.tweak_data = {
 			},
 		},
 
-		-- NPC skeleton entries, lib/tweak_data/weapontweakdata.lua:29905-29963
-		m4_crew = {usage = 'is_rifle', sounds = {}, use_data = {}, auto = {}},
-		g17_crew = {usage = 'is_pistol', sounds = {}, use_data = {}},
+		-- NPC crew entries: skeleton at lib/tweak_data/weapontweakdata.lua:29905-29962,
+		-- values filled in by _init_data_m4_crew (:1648-1664) and
+		-- _init_data_g17_crew (:1829-1844).
+		m4_crew = {
+			categories = {'assault_rifle'},
+			usage = 'is_rifle',
+			sounds = {},
+			use_data = {},
+			DAMAGE = 1.5,
+			CLIP_AMMO_MAX = 30,
+			NR_CLIPS_MAX = 5,
+			auto = {fire_rate = 0.1},
+			alert_size = 5000,
+			suppression = 1,
+			FIRE_MODE = 'auto',
+		},
+		g17_crew = {
+			categories = {'pistol'},
+			usage = 'is_pistol',
+			sounds = {},
+			use_data = {},
+			DAMAGE = 1,
+			CLIP_AMMO_MAX = 17,
+			NR_CLIPS_MAX = 5,
+			alert_size = 2500,
+			suppression = 1,
+			FIRE_MODE = 'single',
+		},
 
 		factory = {
 			parts = {
@@ -389,6 +414,23 @@ fixtures.tweak_data = {
 					custom_stats = {ammo_pickup_max_mul = 0.6, ammo_pickup_min_mul = 0.4},
 				},
 
+				-- lib/tweak_data/weaponfactorytweakdata.lua:12965 (non-ammo part
+				-- with ammo pickup custom stats; used only to exercise the
+				-- custom_stats fold that newraycastweaponbase.lua:932-947 does)
+				wpn_fps_pis_deagle_ck = {
+					type = 'exclusive_set',
+					stats = {concealment = -1, damage = 1, recoil = 2, spread = 2, value = 1},
+					custom_stats = {ammo_pickup_max_mul = 1.2, ammo_pickup_min_mul = 1.2},
+				},
+
+				-- lib/tweak_data/weaponfactorytweakdata.lua:20879 (non-ammo part
+				-- with a fire-rate custom stat)
+				wpn_fps_snp_awp_dh_speed = {
+					type = 'bolt',
+					stats = {concealment = -1, fire_rate = 2, value = 1},
+					custom_stats = {fire_rate_multiplier = 1.3},
+				},
+
 				-- lib/tweak_data/weaponfactorytweakdata.lua:12322-12418 (M308)
 				wpn_fps_ass_m14_b_standard = {type = 'barrel', stats = {value = 1}},
 				wpn_fps_ass_m14_body_lower = {type = 'lower_body', stats = {value = 1}},
@@ -488,6 +530,23 @@ fixtures.tweak_data = {
 					'wpn_fps_upg_m4_m_straight_vanilla',
 					'wpn_fps_upg_m4_s_standard_vanilla',
 					'wpn_fps_upg_m4_g_standard_vanilla',
+					'wpn_fps_amcar_bolt_standard',
+				},
+			},
+
+			-- lib/tweak_data/weaponfactorytweakdata.lua:6148
+			-- (deep clone of wpn_fps_ass_m4; only the default blueprint matters here)
+			wpn_fps_ass_m4_npc = {
+				default_blueprint = {
+					'wpn_fps_upg_m4_g_standard_vanilla',
+					'wpn_fps_m4_lower_reciever',
+					'wpn_fps_m4_upper_reciever_round',
+					'wpn_fps_m4_uupg_b_medium_vanilla',
+					'wpn_fps_m4_uupg_fg_rail',
+					'wpn_fps_m4_uupg_m_std_vanilla',
+					'wpn_fps_upg_m4_s_standard_vanilla',
+					'wpn_fps_m4_uupg_draghandle',
+					'wpn_fps_m4_uupg_o_flipup',
 					'wpn_fps_amcar_bolt_standard',
 				},
 			},
@@ -618,14 +677,16 @@ fixtures.context = {
 }
 
 -- Blueprints used by the mutation tests, on top of each weapon default:
---   * AMCAR + scope: the factory adds three rail parts, the scope forbids the
---     default upper receiver, and its -3 concealment is summed from part stats.
+--   * AMCAR + scope: the default blueprint plus the spot scope. The factory adds
+--     three rail parts, the scope forbids the default upper receiver, and that
+--     (now forbidden) receiver still forbids the rail extension.
 --   * CAR-4 + stock: replaces the stat-less vanilla stock with the real one
 --     (concealment -1, recoil +1) and pulls in the stock adapter via adds_type.
 fixtures.blueprints = {
 	amcar_scope = {
 		'wpn_fps_m4_uupg_b_medium_vanilla',
 		'wpn_fps_m4_lower_reciever',
+		'wpn_fps_amcar_uupg_body_upperreciever',
 		'wpn_fps_amcar_uupg_fg_amcar',
 		'wpn_fps_upg_m4_m_straight_vanilla',
 		'wpn_fps_upg_m4_s_standard_vanilla',
@@ -644,6 +705,14 @@ fixtures.blueprints = {
 		'wpn_fps_m4_uupg_draghandle',
 		'wpn_fps_m4_uupg_o_flipup',
 		'wpn_fps_amcar_bolt_standard',
+	},
+	-- Custom-stats folding cases: a real ammo part plus real non-ammo parts.
+	car4_ammo_pickup = {
+		'wpn_fps_ammo_type',
+		'wpn_fps_pis_deagle_ck',
+	},
+	car4_fire_rate_part = {
+		'wpn_fps_snp_awp_dh_speed',
 	},
 }
 

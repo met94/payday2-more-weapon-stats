@@ -25,6 +25,16 @@ local function assert_near(t, actual, expected, message)
 	t.assert_true(math.abs(actual - expected) <= EPSILON, ('%s: expected %.6f, got %.6f'):format(message, expected, actual))
 end
 
+local function contains_string(list, value)
+	for _, entry in ipairs(list) do
+		if entry == value then
+			return true
+		end
+	end
+
+	return false
+end
+
 -- Runs fn with a stubbed managers table, restoring the previous global even on
 -- failure, so a broken case cannot poison the rest of the suite.
 local function with_managers(stub, fn)
@@ -69,7 +79,8 @@ local EXPECTED = {
 	{
 		id = 'judge', name = 'Judge', categories = {'shotgun'},
 		damage_index = 155, damage = 15.5, clip = 5, total = 35,
-		fire_rate = 0.12, fire_mode_rate = 0.21, fire_mode = 'single', toggle = true,
+		-- judge declares no CAN_TOGGLE_FIREMODE in 248.2; only x_judge sets it
+		fire_rate = 0.12, fire_mode_rate = 0.21, fire_mode = 'single', toggle = nil,
 		concealment = 29, suspicion = 0.3,
 	},
 	{
@@ -204,6 +215,82 @@ return function(t)
 		end)
 	end)
 
+	t.test('context upgrade cache keys include the requested default', function()
+		local calls = 0
+		local stub = {
+			player = {
+				-- PlayerManager:upgrade_value returns `default or 0`.
+				upgrade_value = function(_, _, _, default)
+					calls = calls + 1
+
+					return default or 0
+				end,
+			},
+		}
+
+		with_managers(stub, function()
+			local ctx = fresh_context()
+
+			t.assert_equal(ctx:upgrade_value('weapon', 'clip_ammo_increase', 0), 0, 'default 0')
+			t.assert_equal(ctx:upgrade_value('weapon', 'clip_ammo_increase', 5), 5, 'default 5 is not the cached 0')
+			t.assert_equal(ctx:upgrade_value('weapon', 'clip_ammo_increase'), 0, 'nil default resolves to 0')
+			t.assert_equal(calls, 3, 'each default is queried once')
+		end)
+	end)
+
+	t.test('context capture reads skills, perks, detection risk and competitive', function()
+		local lerp_seen
+		local stub = {
+			skilltree = {
+				_global = {
+					skills = {
+						shotgun_impact = {unlocked = 2, total = 3},
+						iron_man = {unlocked = 1, total = 1},
+					},
+					specializations = {
+						current_specialization = 2,
+						[1] = {points_spent = 5},
+						[2] = {points_spent = 9},
+						points = 14,
+					},
+				},
+			},
+			blackmarket = {
+				get_suspicion_offset_of_local = function(_, lerp)
+					lerp_seen = lerp
+
+					return 0.42
+				end,
+			},
+			job = {
+				is_current_job_competitive = function()
+					return true
+				end,
+			},
+		}
+
+		with_managers(stub, function()
+			local ctx = fresh_context()
+
+			t.assert_equal(ctx.skills.shotgun_impact, 2, 'skill unlocked level')
+			t.assert_equal(ctx.skills.iron_man, 1, 'second skill level')
+			t.assert_nil(ctx.skills.current_specialization, 'only real skills are captured')
+			t.assert_equal(ctx.perks[1], 5, 'perk deck 1 points')
+			t.assert_equal(ctx.perks[2], 9, 'perk deck 2 points')
+			t.assert_nil(ctx.perks.points, 'scalar specialization fields are skipped')
+			assert_near(t, lerp_seen, 0.75, 'suspicion lerp falls back to 0.75')
+			t.assert_equal(ctx.detection_risk, 42, 'detection risk is the rounded suspicion offset * 100')
+			t.assert_equal(ctx.competitive, true, 'competitive job flag')
+		end)
+	end)
+
+	t.test('context leaves detection_risk nil without a loadout and competitive false', function()
+		local ctx = fresh_context()
+
+		t.assert_nil(ctx.detection_risk, 'no blackmarket manager means no detection risk')
+		t.assert_equal(ctx.competitive, false, 'default not competitive')
+	end)
+
 	for _, expected in ipairs(EXPECTED) do
 		t.test('WeaponModel core stats: ' .. expected.name, function()
 			local ctx = fresh_context()
@@ -258,10 +345,19 @@ return function(t)
 
 		local scoped = weapon.new('amcar', fixtures.blueprints.amcar_scope, ctx)
 
+		t.assert_type(scoped.blueprint[3], 'string', 'blueprint still carries the upper receiver')
+		t.assert_equal(scoped.blueprint[3], 'wpn_fps_amcar_uupg_body_upperreciever', 'default upper receiver is in the blueprint')
 		t.assert_nil(scoped.parts['wpn_fps_amcar_uupg_body_upperreciever'], 'scope forbids the default upper receiver')
-		t.assert_type(scoped.parts['wpn_fps_m4_uupg_fg_rail_ext'], 'table', 'factory adds the rail extension')
-		t.assert_type(scoped.parts['wpn_fps_m4_uupg_draghandle_vanilla'], 'table', 'factory adds the draghandle')
-		t.assert_type(scoped.parts['wpn_fps_m4_upper_reciever_round_vanilla'], 'table', 'factory adds the round upper')
+		-- The factory adds three rail parts for the scope; the default (now
+		-- forbidden) receiver forbids all three, so they stay in the assembled
+		-- blueprint but not in the part table.
+		local added = scoped._assembled_blueprint
+		t.assert_true(contains_string(added, 'wpn_fps_m4_uupg_fg_rail_ext'), 'factory adds the rail extension')
+		t.assert_true(contains_string(added, 'wpn_fps_m4_uupg_draghandle_vanilla'), 'factory adds the draghandle')
+		t.assert_true(contains_string(added, 'wpn_fps_m4_upper_reciever_round_vanilla'), 'factory adds the round upper')
+		t.assert_nil(scoped.parts['wpn_fps_m4_uupg_fg_rail_ext'], 'forbidden receiver forbids the rail extension')
+		t.assert_nil(scoped.parts['wpn_fps_m4_uupg_draghandle_vanilla'], 'forbidden receiver forbids the draghandle')
+		t.assert_nil(scoped.parts['wpn_fps_m4_upper_reciever_round_vanilla'], 'forbidden receiver forbids the round upper')
 		t.assert_equal(scoped:concealment(), 18, 'scope part stats lower concealment')
 		assert_near(t, scoped:suspicion(), 1.05, 'suspicion uses part concealment')
 		assert_near(t, scoped._recoil, 1.0, 'recoil index +1 resolved')
@@ -308,30 +404,64 @@ return function(t)
 		assert_near(t, model._damage, 6.4, 'damage after skin bonus')
 	end)
 
-	t.test('ammo parts feed _ammo_data', function()
+	t.test('ammo parts feed _ammo_data and non-ammo custom stats fold into it', function()
 		local ctx = fresh_context()
 		local model = weapon.new('new_m4', {'wpn_fps_ammo_type'}, ctx)
 
 		t.assert_type(model._ammo_data, 'table', 'ammo data table')
 		assert_near(t, model._ammo_data.ammo_pickup_max_mul, 0.6, 'ammo pickup max multiplier')
 		assert_near(t, model._ammo_data.ammo_pickup_min_mul, 0.4, 'ammo pickup min multiplier')
+
+		-- newraycastweaponbase.lua:932-938 multiplies the pickup muls from
+		-- non-ammo parts into the ammo part's custom_stats.
+		local pickup = weapon.new('new_m4', fixtures.blueprints.car4_ammo_pickup, ctx)
+		assert_near(t, pickup._ammo_data.ammo_pickup_min_mul, 0.4 * 1.2, 'folded pickup min multiplier')
+		assert_near(t, pickup._ammo_data.ammo_pickup_max_mul, 0.6 * 1.2, 'folded pickup max multiplier')
+
+		-- newraycastweaponbase.lua:944-946 stores (value - 1) for fire rate.
+		local fast = weapon.new('new_m4', fixtures.blueprints.car4_fire_rate_part, ctx)
+		assert_near(t, fast._ammo_data.fire_rate_multiplier, 0.3, 'folded fire rate delta')
+		assert_near(t, fast:fire_rate_multiplier(), 1.3, 'fire rate multiplier applied')
+		assert_near(t, fast._next_fire_allowed, 0.1 / 1.3, 'next fire interval uses the multiplier')
 	end)
 
-	t.test('new_from_slot resolves crew/NPC ids against the player stat source', function()
+	t.test('new_from_slot forwards cosmetics to the player model', function()
+		local skinned = weapon.new_from_slot('new_m4', nil, {npc = false, cosmetics = {bonus = 'damage_p2'}})
+
+		t.assert_type(skinned, 'table', 'skinned slot model')
+		t.assert_equal(skinned._current_stats_indices.damage, 64, 'cosmetics reached the stat indices')
+		assert_near(t, skinned._damage, 6.4, 'damage skin bonus applied from the slot path')
+	end)
+
+	t.test('NPC models read damage, magazine, alert size and suppression from the crew entry', function()
 		local crew = weapon.new_from_slot('new_m4', nil, {npc = true})
 
 		t.assert_type(crew, 'table', 'crew model')
 		t.assert_equal(crew._name_id, 'm4_crew', 'crew tweak id')
 		t.assert_equal(crew._npc, true, 'npc flag')
+		t.assert_equal(crew._factory_id, 'wpn_fps_ass_m4_npc', 'crew factory clone')
 		t.assert_equal(crew:weapon_tweak_data().usage, 'is_rifle', 'crew usage data')
-		t.assert_equal(crew:categories()[1], 'assault_rifle', 'categories come from the player weapon')
-		assert_near(t, crew._damage, 6.2, 'damage comes from the player weapon stats')
-		t.assert_equal(crew:get_ammo_max_per_clip(), 30, 'magazine comes from the player weapon')
+		t.assert_equal(crew:categories()[1], 'assault_rifle', 'categories come from the crew entry')
+		assert_near(t, crew._damage, 1.5, 'crew DAMAGE, not player stat indices')
+		t.assert_equal(crew:get_ammo_max_per_clip(), 30, 'crew CLIP_AMMO_MAX')
+		t.assert_nil(crew:get_ammo_total(), 'crew entries define no AMMO_MAX in 248.2')
+		assert_near(t, crew._alert_size, 5000, 'crew alert_size')
+		assert_near(t, crew._suppression, 1, 'crew suppression')
+		assert_near(t, crew:weapon_fire_rate(), 0.1, 'crew auto fire rate')
+		t.assert_equal(crew:fire_rate_multiplier(), 1, 'npc skips player fire-rate upgrades')
+		assert_near(t, crew._next_fire_allowed, 0.1, 'npc fire interval')
+		t.assert_equal(crew:concealment(), 0, 'npc weapons have no concealment')
+		t.assert_nil(crew:suspicion(), 'npc weapons have no suspicion')
+		t.assert_nil(crew:can_toggle_firemode(), 'crew entry has no CAN_TOGGLE_FIREMODE')
 
 		local mapped = weapon.new_from_slot('glock_17', {}, {npc = true})
 		t.assert_type(mapped, 'table', 'mapped crew model')
 		t.assert_equal(mapped._name_id, 'g17_crew', 'glock_17 -> g17_crew mapping')
-		assert_near(t, mapped._damage, 5.3, 'glock damage')
+		assert_near(t, mapped._damage, 1, 'g17_crew DAMAGE')
+		t.assert_equal(mapped:get_ammo_max_per_clip(), 17, 'g17_crew CLIP_AMMO_MAX')
+		assert_near(t, mapped:weapon_fire_rate(), 0.1, 'npc fallback fire interval when auto is absent')
+		t.assert_nil(mapped:mode_fire_rate(), 'g17_crew has no auto fire rate')
+		assert_near(t, mapped._alert_size, 2500, 'g17_crew alert_size')
 		t.assert_equal(mapped:is_category('pistol'), true, 'glock category')
 		t.assert_equal(mapped._npc, true, 'glock npc flag')
 
