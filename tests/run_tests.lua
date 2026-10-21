@@ -99,6 +99,7 @@ local specs = {
 	'tests/melee_spec.lua',
 	'tests/henchmen_spec.lua',
 	'tests/compat_spec.lua',
+	'tests/loader_spec.lua',
 }
 
 for _, spec_path in ipairs(specs) do

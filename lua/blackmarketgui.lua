@@ -1,7 +1,29 @@
 local key = ModPath .. '	' .. RequiredScript
 if _G[key] then return else _G[key] = true end
 
-local SimpleChart = dofile(ModPath .. 'lua/_chart.lua')
+-- A failed bootstrap (or a namespace without the loader) must leave the Black
+-- Market vanilla: install no MWS wrappers at all rather than a partial set.
+if type(MoreWeaponStats) ~= 'table' or MoreWeaponStats.disabled then
+	log('[More Weapon Stats] bootstrap unavailable, Black Market hooks skipped')
+
+	return
+end
+
+if type(MoreWeaponStats.load_module) ~= 'function' then
+	log('[More Weapon Stats] module loader unavailable, Black Market hooks skipped')
+
+	return
+end
+
+-- The range chart is its own module: it is read through the loader so the
+-- chunk's table comes back, and a missing chart leaves the menu vanilla.
+local SimpleChart, chart_error = MoreWeaponStats:load_module(ModPath .. 'lua/_chart.lua')
+
+if type(SimpleChart) ~= 'table' then
+	log('[More Weapon Stats] failed to load lua/_chart.lua: ' .. tostring(chart_error))
+
+	return
+end
 
 DB:create_entry(
 	Idstring('texture'),
@@ -435,11 +457,29 @@ function BlackMarketGui:_setup(is_start_page, component_data)
 			top = top + 64
 		end
 
-		-- damage range modifier
-		self.mws_range_charts = {
-			SimpleChart:new(self.mws_stances_panel, 105, 0, 100, self.mws_stances_panel:h(), self.mws_stances_panel:h() / 2),
-			SimpleChart:new(self.mws_stances_panel, 210, 0, 100, self.mws_stances_panel:h(), self.mws_stances_panel:h() / 2),
-		}
+		-- damage range modifier. The two charts are a UI extra: if the chart
+		-- widget cannot construct, the stat rows above still render without them.
+		self.mws_range_charts = {}
+		if type(SimpleChart.new) == 'function' then
+			for _, chart_x in ipairs({ 105, 210 }) do
+				local ok, chart = pcall(
+					SimpleChart.new,
+					SimpleChart,
+					self.mws_stances_panel,
+					chart_x,
+					0,
+					100,
+					self.mws_stances_panel:h(),
+					self.mws_stances_panel:h() / 2
+				)
+
+				if ok and chart then
+					table.insert(self.mws_range_charts, chart)
+				else
+					log('[More Weapon Stats] range chart unavailable: ' .. tostring(chart))
+				end
+			end
+		end
 		self.mws_range_charts_floating_text = self.mws_range_charts_floating_text or self.mws_stances_panel:root():text({
 			layer = 100000000000,
 			visible = false,
@@ -675,6 +715,10 @@ function BlackMarketGui:_show_stats()
 				local ballistics = core and core.ballistics
 
 				local function update_bars(wbase, chart)
+					if not chart then
+						return
+					end
+
 					local weapon_tweak = wbase
 						and type(wbase.weapon_tweak_data) == 'function'
 						and wbase:weapon_tweak_data()

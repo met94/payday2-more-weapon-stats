@@ -1,3 +1,12 @@
+Revision 79:
+- fixed the in-game bootstrap crash `module must return a table: lua/ui/stats_panel.lua`: modules are now loaded through `blt.vm.loadfile` (fallback `loadfile`, then `io.open` + `loadstring`) and their returned tables are read from the chunk call itself, because SuperBLT's include loader does not propagate a chunk's return value (headless LuaJIT tests could not see that)
+- added `MoreWeaponStats:load_module(path)`: every load and every chunk run is pcall'd and returns `nil, error_string` instead of throwing
+- a module that fails now logs `[More Weapon Stats] failed to load <path>: <error>`, marks the namespace disabled and returns from the bootstrap; no assert, no crash, `compat.init()` only runs when every module loaded
+- the Black Market hook loads `lua/_chart.lua` through the same loader and installs nothing when the namespace is disabled or the chart module is missing, so the game stays vanilla instead of running a partial bootstrap
+- the two range charts are constructed under pcall; the stat rows still render if the chart widget fails
+- added tests/loader_spec.lua: loader order, missing path, throwing blt loader, throwing chunk, non-table return, and the inert Black Market hook
+Player notes: the Black Market opens again instead of throwing a fatal Lua error on the first page; if a mod file ever fails to load, the weapon stats stay off for that session instead of taking the game down.
+
 Revision 78:
 - rebuilt the mod around plain tweak-data calculations: no more fake weapon units, fake player inventory, fake sound device, class swapping or weapon-class pre-hooks
 - removed the three lib/units/weapons pre-hooks; only lib/entry is pre-hooked now

@@ -6,7 +6,7 @@
 	"image" : "tdlq.dds",
 	"color" : "0.52 1 0",
 	"contact" : "",
-	"version" : "78",
+	"version" : "79",
 	"priority" : 20,
 	"pre_hooks" : [
 		{
