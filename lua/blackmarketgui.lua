@@ -196,6 +196,10 @@ local mws_original_blackmarketgui_setup = BlackMarketGui._setup
 function BlackMarketGui:_setup(is_start_page, component_data)
 	_dlc_info_patched = false
 	_henchmen_weapon = false
+
+	-- New render: drop the cached player snapshot so difficulty, skills and
+	-- perks are re-read once for this page instead of once per stat row.
+	MoreWeaponStats.core.context.invalidate()
 	if component_data then
 		if component_data.buying_weapon then
 			_henchmen_weapon = not not (not component_data[1].on_create_func_name and component_data[1].on_create_func)
