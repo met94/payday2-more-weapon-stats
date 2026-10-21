@@ -173,11 +173,12 @@ Kept explicit per weapon below; the class constants are noted next to each.
 
 --[[
 tweak_data.character.russian.weapon = clone(presets.weapon.gang_member)
-(lib/tweak_data/charactertweakdata.lua:3949). The aliases at :9667-9676 share
-the same tables, so the unique FALLOFF distances the henchman rows show are
-100, 300, 500, 700, 1000, 2000, 2500, 3000, 4000 and 10000. Only the fields
-the henchman rows read are copied per usage (aim_delay, spread, RELOAD_SPEED,
-autofire_rounds and the FALLOFF entry fields dmg_mul/r/acc/recoil).
+(lib/tweak_data/charactertweakdata.lua:3946-3953; `weapons_of_choice` is added
+at :3950-3952). The aliases at :9669-9676 share or clone the same tables, so
+the unique FALLOFF distances the henchman rows show are 100, 300, 500, 700,
+1000, 2000, 2500, 3000, 4000 and 10000. Only the fields the henchman rows read
+are copied per usage (aim_delay, spread, RELOAD_SPEED, autofire_rounds and the
+FALLOFF entry fields dmg_mul/r/acc/recoil).
 ]]
 local gang_member_weapon = {
 	-- :9103-9151
@@ -272,12 +273,25 @@ local gang_member_weapon = {
 	},
 }
 
--- :9670-9676: the aliases collapse onto the tables above.
+-- :9670-9676: the aliases collapse onto the tables above; `rifle` is a deep
+-- clone of is_rifle with autofire_rounds removed (:9674-9675), not the same
+-- table, so it is modelled separately.
 gang_member_weapon.is_revolver = gang_member_weapon.is_pistol
 gang_member_weapon.is_smg = gang_member_weapon.is_rifle
 gang_member_weapon.is_bullpup = gang_member_weapon.is_rifle
 gang_member_weapon.mac11 = gang_member_weapon.is_rifle
 gang_member_weapon.akimbo_pistol = gang_member_weapon.is_pistol
+
+gang_member_weapon.rifle = {}
+for key, value in pairs(gang_member_weapon.is_rifle) do
+	gang_member_weapon.rifle[key] = value
+end
+gang_member_weapon.rifle.autofire_rounds = nil
+
+-- :3950-3952: the crew weapon the gang-member preset spawns.
+gang_member_weapon.weapons_of_choice = {
+	primary = 'wpn_fps_ass_m4_npc',
+}
 
 fixtures.tweak_data = {
 	-- lib/tweak_data/tweakdata.lua:373-382
@@ -762,10 +776,12 @@ fixtures.tweak_data = {
 			suppression = 1,
 			FIRE_MODE = 'single',
 		},
-		-- Skeleton at lib/tweak_data/weapontweakdata.lua:30171-30176, values
-		-- filled in by _init_data_m95_crew (:2431-2448).
+		-- Skeleton at lib/tweak_data/weapontweakdata.lua:30175-30181 (incl.
+		-- anim_usage = "is_bullpup", which only drives the cop animation),
+		-- values filled in by _init_data_m95_crew (:2431-2448).
 		m95_crew = {
 			categories = {'snp'},
+			anim_usage = 'is_bullpup',
 			usage = 'is_sniper',
 			sounds = {},
 			use_data = {},
