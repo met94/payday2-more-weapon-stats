@@ -454,16 +454,33 @@ return function(t)
 		t.assert_nil(crew:suspicion(), 'npc weapons have no suspicion')
 		t.assert_nil(crew:can_toggle_firemode(), 'crew entry has no CAN_TOGGLE_FIREMODE')
 
+		-- Task 6 formats these with %.2f; NPC models must expose numbers, never nil.
+		for _, field in ipairs({'damage', 'spread', 'spread_moving', 'recoil', 'zoom', 'reload', 'alert_size', 'suppression'}) do
+			t.assert_type(crew._current_stats[field], 'number', 'crew numeric stat ' .. field)
+		end
+
+		t.assert_type(crew._recoil, 'number', 'crew _recoil')
+		t.assert_type(crew._spread, 'number', 'crew _spread')
+		t.assert_type(crew._spread_moving, 'number', 'crew _spread_moving')
+		t.assert_type(crew._zoom, 'number', 'crew _zoom')
+		t.assert_type(crew._reload, 'number', 'crew _reload')
+		t.assert_type(crew._alert_size, 'number', 'crew _alert_size')
+		t.assert_type(crew._suppression, 'number', 'crew _suppression')
+
 		local mapped = weapon.new_from_slot('glock_17', {}, {npc = true})
 		t.assert_type(mapped, 'table', 'mapped crew model')
 		t.assert_equal(mapped._name_id, 'g17_crew', 'glock_17 -> g17_crew mapping')
 		assert_near(t, mapped._damage, 1, 'g17_crew DAMAGE')
 		t.assert_equal(mapped:get_ammo_max_per_clip(), 17, 'g17_crew CLIP_AMMO_MAX')
-		assert_near(t, mapped:weapon_fire_rate(), 0.1, 'npc fallback fire interval when auto is absent')
+		t.assert_nil(mapped:weapon_fire_rate(), 'single-fire crew weapon has no interval')
+		t.assert_nil(mapped:fire_rate_rpm(), 'single-fire crew weapon must not invent an RPM')
+		t.assert_nil(mapped._next_fire_allowed, 'no next-fire interval without an auto rate')
 		t.assert_nil(mapped:mode_fire_rate(), 'g17_crew has no auto fire rate')
 		assert_near(t, mapped._alert_size, 2500, 'g17_crew alert_size')
 		t.assert_equal(mapped:is_category('pistol'), true, 'glock category')
 		t.assert_equal(mapped._npc, true, 'glock npc flag')
+		t.assert_type(mapped._recoil, 'number', 'g17 _recoil is a number')
+		t.assert_type(mapped._spread_moving, 'number', 'g17 _spread_moving is a number')
 
 		local player = weapon.new_from_slot('new_m4', nil, {npc = false})
 		t.assert_equal(player._name_id, 'new_m4', 'player slot keeps the weapon id')
