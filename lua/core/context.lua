@@ -16,9 +16,11 @@ Public API:
 			ducking         boolean player is crouched
 			steelsight      boolean player is aiming down sights
 			deployed        boolean bipod deployed
-			skills          table   skill_name -> level
-			perks           table   perk deck -> points/level
+			skills          table   skill_id -> unlocked level (managers.skilltree)
+			perks           table   perk deck (specialization index) -> points spent
 			upgrades        table   resolved upgrade values, category -> upgrade -> value
+			detection_risk  number|nil  player suspicion offset * 100, when a loadout exists
+			competitive     boolean the current job is competitive (skin bonuses are off)
 		Methods:
 			ctx:upgrade_value(category, upgrade, default)
 			ctx:temporary_upgrade_value(category, upgrade, default)
@@ -44,9 +46,13 @@ Manager reads (PAYDAY 2 248.2):
 	248.2 has no PlayerManager:get_difficulty(), so the difficulty comes from
 	Global.game_settings.difficulty (the value the game itself persists) with
 	PlayerManager:get_difficulty() used only if a future build/mutator adds it.
-	Skill and perk levels are folded into PlayerManager._global.upgrades in 248.2;
-	they are copied here when present, otherwise skills/perks stay empty and all
-	skill queries go through upgrade_value.
+	Skill levels come from SkillTreeManager._global.skills
+	(lib/managers/skilltreemanager.lua:64,323-332) and the perk deck from
+	SkillTreeManager._global.specializations (:129-162, points_spent per deck).
+	There is no PlayerManager skill/perk enumeration in 248.2.
+	detection_risk mirrors PlayerManager:_cached_detection_risk (:2778-2788):
+	round(blackmarket:get_suspicion_offset_of_local(SUSPICION_OFFSET_LERP) * 100);
+	competitive mirrors JobManager:is_current_job_competitive (:1685).
 ]]
 
 local context = {}
@@ -127,12 +133,95 @@ local function read_difficulty()
 	return DIFFICULTY_DEFAULT
 end
 
-local function read_player_table(player, key)
-	if player and type(player._global) == 'table' and type(player._global[key]) == 'table' then
-		return deep_copy(player._global[key])
+local function manager(name)
+	local managers = raw_global('managers')
+	return managers and managers[name] or nil
+end
+
+local function round(value)
+	if math.round then
+		return math.round(value)
 	end
 
-	return {}
+	return math.floor(value + 0.5)
+end
+
+local function numeric(value)
+	local number = tonumber(value)
+	return number or value
+end
+
+-- SkillTreeManager._global.skills (lib/managers/skilltreemanager.lua:64): each
+-- entry is { unlocked = level, total = max_level }.
+local function read_skills()
+	local skilltree = manager('skilltree')
+	local stored = skilltree and skilltree._global and skilltree._global.skills
+	local skills = {}
+
+	if type(stored) == 'table' then
+		for skill_id, entry in pairs(stored) do
+			if type(entry) == 'table' then
+				skills[skill_id] = numeric(entry.unlocked)
+			elseif type(entry) == 'number' then
+				skills[skill_id] = entry
+			end
+		end
+	end
+
+	return skills
+end
+
+-- SkillTreeManager._global.specializations (lib/managers/skilltreemanager.lua:129-162):
+-- the perk decks are the specialization trees, keyed by their 1-based index.
+local function read_perks()
+	local skilltree = manager('skilltree')
+	local stored = skilltree and skilltree._global and skilltree._global.specializations
+	local perks = {}
+
+	if type(stored) == 'table' then
+		for deck, entry in pairs(stored) do
+			if type(deck) == 'number' and type(entry) == 'table' then
+				local points = tonumber(entry.points_spent)
+
+				if points then
+					perks[deck] = points
+				end
+			end
+		end
+	end
+
+	return perks
+end
+
+-- PlayerManager:_cached_detection_risk (lib/managers/playermanager.lua:2778-2788).
+local function read_detection_risk()
+	local blackmarket = manager('blackmarket')
+
+	if not blackmarket or type(blackmarket.get_suspicion_offset_of_local) ~= 'function' then
+		return nil
+	end
+
+	local tweak_data = raw_global('tweak_data')
+	local lerp = tweak_data and tweak_data.player and tweak_data.player.SUSPICION_OFFSET_LERP or 0.75
+	local ok, offset = pcall(blackmarket.get_suspicion_offset_of_local, blackmarket, lerp)
+
+	if ok and type(offset) == 'number' then
+		return round(offset * 100)
+	end
+
+	return nil
+end
+
+-- JobManager:is_current_job_competitive (lib/managers/jobmanager.lua:1685).
+local function read_competitive()
+	local job = manager('job')
+
+	if not job or type(job.is_current_job_competitive) ~= 'function' then
+		return false
+	end
+
+	local ok, value = pcall(job.is_current_job_competitive, job)
+	return ok and not not value or false
 end
 
 --[[
@@ -151,6 +240,8 @@ local function make_context(base)
 		skills = deep_copy(base.skills),
 		perks = deep_copy(base.perks),
 		upgrades = deep_copy(base.upgrades),
+		detection_risk = base.detection_risk,
+		competitive = base.competitive,
 	}
 
 	local upgrade_cache = base.upgrade_cache
@@ -173,7 +264,10 @@ local function make_context(base)
 	end
 
 	function result:upgrade_value(category, upgrade, default)
-		local key = tostring(category) .. '\0' .. tostring(upgrade)
+		-- PlayerManager:upgrade_value returns `default or 0`, so the same
+		-- category/upgrade with a different default resolves differently; the
+		-- default is part of the cache key.
+		local key = tostring(category) .. '\0' .. tostring(upgrade) .. '\0' .. tostring(default)
 		local cached = upgrade_cache[key]
 
 		if cached ~= nil then
@@ -264,7 +358,6 @@ local function ensure_snapshot()
 		return snapshot
 	end
 
-	local player = player_manager()
 	local difficulty = read_difficulty()
 
 	snapshot = {
@@ -274,9 +367,11 @@ local function ensure_snapshot()
 		ducking = false,
 		steelsight = false,
 		deployed = false,
-		skills = read_player_table(player, 'skills'),
-		perks = read_player_table(player, 'perks'),
+		skills = read_skills(),
+		perks = read_perks(),
 		upgrades = {},
+		detection_risk = read_detection_risk(),
+		competitive = read_competitive(),
 		upgrade_cache = {},
 		property_cache = {},
 	}

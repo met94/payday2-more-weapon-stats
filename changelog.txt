@@ -5,6 +5,7 @@ Revision 78:
 - added lua/core (context, weapon, ballistics, timers, accuracy, ammo) and lua/ui (stats, breakpoints, melee, henchmen) modules, filled in over the next revisions
 - added a headless LuaJIT test runner under tests/
 - the weapon stat model (damage, magazine/reserve ammo, fire rate, concealment, blueprint mods, skin bonuses) is now computed in pure Lua from tweak data instead of a fake weapon unit
+- henchman weapon previews read damage, magazine, alert size and suppression from the NPC/crew tweak entries, matching how the game spawns those weapons
 - context snapshots (difficulty, stances, skills/perks) are captured once per Black Market page and can no longer be mutated by a stat row
 Player notes: stats and skin previews no longer go through the old fake weapon engine, which was the thing that could crash the game around skin swapping.
 

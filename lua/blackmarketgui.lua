@@ -199,7 +199,13 @@ function BlackMarketGui:_setup(is_start_page, component_data)
 
 	-- New render: drop the cached player snapshot so difficulty, skills and
 	-- perks are re-read once for this page instead of once per stat row.
-	MoreWeaponStats.core.context.invalidate()
+	-- Guarded: a partially loaded core must never break the vanilla menu.
+	local core = MoreWeaponStats and MoreWeaponStats.core
+	local context = core and core.context
+
+	if context and type(context.invalidate) == 'function' then
+		context.invalidate()
+	end
 	if component_data then
 		if component_data.buying_weapon then
 			_henchmen_weapon = not not (not component_data[1].on_create_func_name and component_data[1].on_create_func)

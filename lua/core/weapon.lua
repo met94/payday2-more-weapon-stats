@@ -631,20 +631,62 @@ local function current_context()
 	return nil
 end
 
+-- Folds non-ammo part custom_stats into the ammo data the same way
+-- NewRaycastWeaponBase:_update_stats_values does for player weapons
+-- (newraycastweaponbase.lua:915-947). With no underbarrel state, every part is
+-- "can_apply"; ammo/underbarrel_ammo parts only provide the base table.
+local function fold_custom_stats_into_ammo_data(ammo_data, custom_stats)
+	local factory = factory_tweak()
+
+	for part_id, stats in pairs(custom_stats) do
+		local source_part = factory and factory.parts and factory.parts[part_id]
+		local part_type = source_part and source_part.type
+
+		if part_type ~= 'ammo' and part_type ~= 'underbarrel_ammo' then
+			if stats.ammo_pickup_min_mul then
+				ammo_data.ammo_pickup_min_mul = ammo_data.ammo_pickup_min_mul
+					and ammo_data.ammo_pickup_min_mul * stats.ammo_pickup_min_mul
+					or stats.ammo_pickup_min_mul
+			end
+
+			if stats.ammo_pickup_max_mul then
+				ammo_data.ammo_pickup_max_mul = ammo_data.ammo_pickup_max_mul
+					and ammo_data.ammo_pickup_max_mul * stats.ammo_pickup_max_mul
+					or stats.ammo_pickup_max_mul
+			end
+
+			if stats.ammo_offset then
+				ammo_data.ammo_offset = (ammo_data.ammo_offset or 0) + stats.ammo_offset
+			end
+
+			if stats.fire_rate_multiplier then
+				ammo_data.fire_rate_multiplier = (ammo_data.fire_rate_multiplier or 0) + (stats.fire_rate_multiplier - 1)
+			end
+		end
+	end
+
+	return ammo_data
+end
+
 --[[
 Builds a model. `stat_id` is the player weapon whose stats/factory feed the
-model; it differs from `name_id` only for NPC crew entries.
+model; it differs from `name_id` only for NPC crew entries. NPC models follow
+NewNPCRaycastWeaponBase (newnpcraycastweaponbase.lua:25-39, :105-120): damage,
+magazine, reserve, alert size and suppression come from the crew tweak entry,
+never from player stat indices.
 ]]
 local function build(name_id, blueprint, context, cosmetics, stat_id, npc)
 	local weapons = weapon_tweak()
+	local name_td = weapons and weapons[name_id]
 
-	if not weapons or type(weapons[name_id]) ~= 'table' then
+	if type(name_td) ~= 'table' then
 		return nil
 	end
 
+	npc = npc and true or false
 	stat_id = stat_id or name_id
 
-	if not has_stats(stat_id) then
+	if not npc and not has_stats(stat_id) then
 		local stripped = strip_variant_suffix(stat_id)
 
 		if has_stats(stripped) then
@@ -655,8 +697,25 @@ local function build(name_id, blueprint, context, cosmetics, stat_id, npc)
 	end
 
 	local stat_td = weapons[stat_id]
+
+	if not stat_td then
+		return nil
+	end
+
+	if npc then
+		-- Crew weapons have no skins; do not let a caller apply player cosmetics.
+		cosmetics = nil
+	end
+
 	local factory_id = resolve_factory_id(stat_id)
 	local factory = factory_tweak()
+
+	if npc and factory and factory[factory_id .. '_npc'] then
+		-- NewNPCRaycastWeaponBase uses the <factory>_npc deep clone
+		-- (weaponfactorytweakdata.lua:6148, :6634).
+		factory_id = factory_id .. '_npc'
+	end
+
 	local factory_weapon = factory and factory[factory_id]
 	local source_blueprint = blueprint
 
@@ -675,6 +734,8 @@ local function build(name_id, blueprint, context, cosmetics, stat_id, npc)
 	local perks = get_perks(factory_id, parts_blueprint, forbidden)
 	local silencer = has_perk('silencer', factory_id, parts_blueprint, forbidden)
 
+	ammo_data = fold_custom_stats_into_ammo_data(ammo_data, custom_stats)
+
 	local base_stats = stat_td.stats
 	local stats_tweak_data = weapons.stats or {}
 	local modifier_stats = stat_td.stats_modifiers
@@ -682,72 +743,83 @@ local function build(name_id, blueprint, context, cosmetics, stat_id, npc)
 	local bonuses = economy and economy.bonuses
 	local bonus_stats = {}
 	local competitive = context and context.competitive or false
-
-	if cosmetics and not competitive and not perks.bonus then
-		local bonus_id = cosmetics.bonus
-
-		if not bonus_id and cosmetics.id then
-			local blackmarket = (tweak() or {}).blackmarket
-			local skins = blackmarket and blackmarket.weapon_skins
-			local skin = skins and skins[cosmetics.id]
-
-			bonus_id = skin and skin.bonus
-		end
-
-		if bonus_id and bonuses and bonuses[bonus_id] then
-			bonus_stats = deep_copy(bonuses[bonus_id].stats or {})
-		end
-	end
-
-	local indices = deep_copy(base_stats)
-
-	for stat in pairs(indices) do
-		local column = stats_tweak_data[stat]
-
-		if column then
-			if indices[stat] < 1 or indices[stat] > #column then
-				log_line(('%s base stat out of bounds: %s = %s, clamping'):format(name_id, tostring(stat), tostring(indices[stat])))
-			end
-
-			if parts_stats[stat] then
-				indices[stat] = indices[stat] + parts_stats[stat]
-			end
-
-			if bonus_stats[stat] then
-				indices[stat] = indices[stat] + bonus_stats[stat]
-			end
-
-			indices[stat] = clamp(indices[stat], 1, #column)
-		end
-	end
-
+	local indices = {}
 	local current_stats = {}
+	local categories = stat_td.categories
 
-	for stat, index in pairs(indices) do
-		local column = stats_tweak_data[stat]
-		local value = column and column[index] or 1
+	if npc then
+		-- NewNPCRaycastWeaponBase:init / :setup read these straight off the crew
+		-- entry (newraycastweaponbase is never involved).
+		categories = name_td.categories or categories
+		current_stats.damage = name_td.DAMAGE
+		current_stats.alert_size = name_td.alert_size
+		current_stats.suppression = name_td.suppression
+	else
+		if cosmetics and not competitive and not perks.bonus then
+			local bonus_id = cosmetics.bonus
 
-		if modifier_stats and modifier_stats[stat] then
-			value = value * modifier_stats[stat]
+			if not bonus_id and cosmetics.id then
+				local blackmarket = (tweak() or {}).blackmarket
+				local skins = blackmarket and blackmarket.weapon_skins
+				local skin = skins and skins[cosmetics.id]
+
+				bonus_id = skin and skin.bonus
+			end
+
+			if bonus_id and bonuses and bonuses[bonus_id] then
+				bonus_stats = deep_copy(bonuses[bonus_id].stats or {})
+			end
 		end
 
-		current_stats[stat] = value
-	end
+		indices = deep_copy(base_stats)
 
-	local concealment_column = stats_tweak_data.concealment
+		for stat in pairs(indices) do
+			local column = stats_tweak_data[stat]
 
-	if indices.concealment and concealment_column then
-		local suspicion_index = clamp(#concealment_column - base_stats.concealment - (parts_stats.concealment or 0), 1, #concealment_column)
+			if column then
+				if indices[stat] < 1 or indices[stat] > #column then
+					log_line(('%s base stat out of bounds: %s = %s, clamping'):format(name_id, tostring(stat), tostring(indices[stat])))
+				end
 
-		indices.suspicion = suspicion_index
-		current_stats.suspicion = concealment_column[suspicion_index]
+				if parts_stats[stat] then
+					indices[stat] = indices[stat] + parts_stats[stat]
+				end
+
+				if bonus_stats[stat] then
+					indices[stat] = indices[stat] + bonus_stats[stat]
+				end
+
+				indices[stat] = clamp(indices[stat], 1, #column)
+			end
+		end
+
+		for stat, index in pairs(indices) do
+			local column = stats_tweak_data[stat]
+			local value = column and column[index] or 1
+
+			if modifier_stats and modifier_stats[stat] then
+				value = value * modifier_stats[stat]
+			end
+
+			current_stats[stat] = value
+		end
+
+		local concealment_column = stats_tweak_data.concealment
+
+		if indices.concealment and concealment_column then
+			local suspicion_index = clamp(#concealment_column - base_stats.concealment - (parts_stats.concealment or 0), 1, #concealment_column)
+
+			indices.suspicion = suspicion_index
+			current_stats.suspicion = concealment_column[suspicion_index]
+		end
 	end
 
 	local model = setmetatable({}, WeaponModel)
 
 	model._name_id = name_id
 	model._stat_weapon_id = stat_id
-	model._npc = npc and true or false
+	model._npc = npc
+	model._categories = categories
 	model._factory_id = factory_id
 	model._blueprint = parts_blueprint
 	model.blueprint = parts_blueprint
@@ -768,12 +840,12 @@ local function build(name_id, blueprint, context, cosmetics, stat_id, npc)
 
 	model._fire_mode_category = model:_resolve_fire_mode_category()
 	model._fire_mode = model._fire_mode_category
-	model._burst_count = stat_td.BURST_COUNT or 3
+	model._burst_count = name_td.BURST_COUNT or 3
 	model._movement_penalty = model:_resolve_movement_penalty()
 	model._armor_piercing_chance = model:_resolve_armor_piercing_chance()
-	model._can_shoot_through_shield = stat_td.can_shoot_through_shield
-	model._can_shoot_through_enemy = stat_td.can_shoot_through_enemy
-	model._can_shoot_through_wall = stat_td.can_shoot_through_wall
+	model._can_shoot_through_shield = name_td.can_shoot_through_shield
+	model._can_shoot_through_enemy = name_td.can_shoot_through_enemy
+	model._can_shoot_through_wall = name_td.can_shoot_through_wall
 
 	if ammo_data then
 		if ammo_data.can_shoot_through_shield ~= nil then
@@ -807,10 +879,16 @@ local function build(name_id, blueprint, context, cosmetics, stat_id, npc)
 	model:_apply_damage_falloff()
 	model._damage_near = stat_td.damage_near
 	model._damage_far = stat_td.damage_far
-	model._use_shotgun_reload = stat_td.use_shotgun_reload
+	model._use_shotgun_reload = name_td.use_shotgun_reload
 
 	model._fire_rate = model:_resolve_fire_rate()
-	model._fire_rate_multiplier = model:_resolve_fire_rate_multiplier()
+
+	if npc then
+		-- NPC weapons never run the player damage/fire-rate upgrade path.
+		model._fire_rate_multiplier = 1
+	else
+		model._fire_rate_multiplier = model:_resolve_fire_rate_multiplier()
+	end
 
 	if model._fire_rate and model._fire_rate_multiplier and model._fire_rate_multiplier ~= 0 then
 		model._next_fire_allowed = model._fire_rate / model._fire_rate_multiplier
@@ -818,12 +896,19 @@ local function build(name_id, blueprint, context, cosmetics, stat_id, npc)
 		model._next_fire_allowed = nil
 	end
 
-	model._ammo_max_per_clip = model:calculate_ammo_max_per_clip()
-	model._ammo_max = model:calculate_ammo_max()
-	model._ammo_max_per_clip = math.min(model._ammo_max_per_clip, model._ammo_max)
-	model._ammo_total = model._ammo_max
-
-	model._damage = ((current_stats.damage or 0) + model:damage_addend()) * model:damage_multiplier()
+	if npc then
+		-- NewNPCRaycastWeaponBase:init (newnpcraycastweaponbase.lua:34-39).
+		model._ammo_max_per_clip = name_td.CLIP_AMMO_MAX
+		model._ammo_max = name_td.AMMO_MAX
+		model._ammo_total = name_td.AMMO_MAX
+		model._damage = name_td.DAMAGE
+	else
+		model._ammo_max_per_clip = model:calculate_ammo_max_per_clip()
+		model._ammo_max = model:calculate_ammo_max()
+		model._ammo_max_per_clip = math.min(model._ammo_max_per_clip, model._ammo_max)
+		model._ammo_total = model._ammo_max
+		model._damage = ((current_stats.damage or 0) + model:damage_addend()) * model:damage_multiplier()
+	end
 
 	return model
 end
@@ -863,7 +948,7 @@ function weapon.new_from_slot(weapon_id, blueprint, options)
 		name_id = stat_id
 	end
 
-	return build(name_id, blueprint, current_context(), nil, stat_id, npc)
+	return build(name_id, blueprint, current_context(), options.cosmetics, stat_id, npc)
 end
 
 -- Metadata ------------------------------------------------------------------
@@ -879,8 +964,7 @@ function WeaponModel:stat_tweak_data()
 end
 
 function WeaponModel:categories()
-	local stat_td = self:stat_tweak_data()
-	return stat_td and stat_td.categories or nil
+	return self._categories
 end
 
 function WeaponModel:is_category(...)
@@ -904,8 +988,10 @@ function WeaponModel:fire_mode_category()
 end
 
 function WeaponModel:can_toggle_firemode()
-	local stat_td = self:stat_tweak_data()
-	return stat_td and stat_td.CAN_TOGGLE_FIREMODE
+	-- NewRaycastWeaponBase:can_toggle_firemode (newraycastweaponbase.lua:2121-2130)
+	-- reads the active weapon tweak entry, which is the crew entry for NPCs.
+	local weapon_td = self:weapon_tweak_data()
+	return weapon_td and weapon_td.CAN_TOGGLE_FIREMODE
 end
 
 function WeaponModel:_resolve_fire_mode_category()
@@ -919,8 +1005,8 @@ function WeaponModel:_resolve_fire_mode_category()
 		return 'volley'
 	end
 
-	local stat_td = self:stat_tweak_data()
-	return stat_td and (stat_td.FIRE_MODE or 'single') or 'single'
+	local weapon_td = self:weapon_tweak_data()
+	return weapon_td and (weapon_td.FIRE_MODE or 'single') or 'single'
 end
 
 function WeaponModel:_resolve_movement_penalty()
@@ -989,15 +1075,21 @@ RaycastWeaponBase:weapon_fire_rate (raycastweaponbase.lua:394) returns the
 fire_mode_data interval, which is the value the game actually fires with.
 Mode-specific tables (td[td.FIRE_MODE].fire_rate) are exposed separately in
 mode_fire_rate() because the old henchman row read them directly.
+NewNPCRaycastWeaponBase:trigger_held (newnpcraycastweaponbase.lua:198-209) uses
+td.auto.fire_rate with a 0.1 fallback instead, so NPC models take that path.
 ]]
 function WeaponModel:_resolve_fire_rate()
-	local stat_td = self:stat_tweak_data()
+	local weapon_td = self:weapon_tweak_data()
 
-	if not stat_td then
+	if not weapon_td then
 		return nil
 	end
 
-	local mode_data = stat_td.fire_mode_data
+	if self._npc then
+		return weapon_td.auto and weapon_td.auto.fire_rate or 0.1
+	end
+
+	local mode_data = weapon_td.fire_mode_data
 
 	if mode_data and mode_data.fire_rate then
 		return mode_data.fire_rate
@@ -1017,26 +1109,30 @@ function WeaponModel:weapon_fire_rate()
 end
 
 function WeaponModel:mode_fire_rate()
-	local stat_td = self:stat_tweak_data()
+	local weapon_td = self:weapon_tweak_data()
 
-	if not stat_td then
+	if not weapon_td then
 		return nil
 	end
 
-	local fire_mode = stat_td.FIRE_MODE
-	local mode = fire_mode and stat_td[fire_mode]
+	if self._npc then
+		return weapon_td.auto and weapon_td.auto.fire_rate or nil
+	end
+
+	local fire_mode = weapon_td.FIRE_MODE
+	local mode = fire_mode and weapon_td[fire_mode]
 
 	if mode and mode.fire_rate then
 		return mode.fire_rate
 	end
 
-	if stat_td.auto and stat_td.auto.fire_rate then
-		return stat_td.auto.fire_rate
+	if weapon_td.auto and weapon_td.auto.fire_rate then
+		return weapon_td.auto.fire_rate
 	end
 
 	-- Akimbo weapons declare FIRE_MODE = "auto" without an auto table; the
 	-- interval they fire with is the fire_mode_data value.
-	return stat_td.fire_mode_data and stat_td.fire_mode_data.fire_rate or nil
+	return weapon_td.fire_mode_data and weapon_td.fire_mode_data.fire_rate or nil
 end
 
 function WeaponModel:fire_rate_rpm()
@@ -1277,6 +1373,12 @@ end
 
 -- BlackMarketManager:_calculate_weapon_concealment (blackmarketmanager.lua:3018).
 function WeaponModel:concealment()
+	-- NPC weapons have no blackmarket concealment model; the henchman row never
+	-- shows it. Returning the player weapon's value here would be a lie.
+	if self._npc then
+		return 0
+	end
+
 	local stat_td = self:stat_tweak_data()
 	local base_stats = stat_td and stat_td.stats
 
