@@ -631,10 +631,16 @@ local function current_context()
 	return nil
 end
 
--- Folds non-ammo part custom_stats into the ammo data the same way
--- NewRaycastWeaponBase:_update_stats_values does for player weapons
--- (newraycastweaponbase.lua:915-947). With no underbarrel state, every part is
--- "can_apply"; ammo/underbarrel_ammo parts only provide the base table.
+-- Folds the custom_stats fields the player weapon path applies to the ammo data
+-- (NewRaycastWeaponBase:_update_stats_values, newraycastweaponbase.lua:915-947):
+-- ammo pickup multipliers, ammo offset and the fire-rate delta. With no
+-- underbarrel state every non-ammo part is "can_apply"; ammo/underbarrel_ammo
+-- parts only provide the base table, exactly like the game. The remaining
+-- custom_stats branches in the same loop (burst_count, volley_* and
+-- launch/charge speeds) are only exercised by underbarrel conversions in 248.2
+-- (the sole part carrying burst_count is an `ammo` part, which the game gates
+-- on is_underbarrel); this model builds no underbarrels, so they are
+-- intentionally not folded here.
 local function fold_custom_stats_into_ammo_data(ammo_data, custom_stats)
 	local factory = factory_tweak()
 
@@ -749,11 +755,20 @@ local function build(name_id, blueprint, context, cosmetics, stat_id, npc)
 
 	if npc then
 		-- NewNPCRaycastWeaponBase:init / :setup read these straight off the crew
-		-- entry (newraycastweaponbase is never involved).
+		-- entry (newraycastweaponbase is never involved). Numeric fields the
+		-- henchman rows format are explicitly 0 so no UI formatter sees nil.
 		categories = name_td.categories or categories
 		current_stats.damage = name_td.DAMAGE
-		current_stats.alert_size = name_td.alert_size
-		current_stats.suppression = name_td.suppression
+		current_stats.alert_size = name_td.alert_size or 0
+		current_stats.suppression = name_td.suppression or 0
+		current_stats.spread = 0
+		current_stats.spread_moving = 0
+		current_stats.spread_multi = 0
+		current_stats.recoil = 0
+		current_stats.zoom = 0
+		current_stats.reload = 0
+		current_stats.extra_ammo = 0
+		current_stats.total_ammo_mod = 0
 	else
 		if cosmetics and not competitive and not perks.bonus then
 			local bonus_id = cosmetics.bonus
@@ -1086,7 +1101,15 @@ function WeaponModel:_resolve_fire_rate()
 	end
 
 	if self._npc then
-		return weapon_td.auto and weapon_td.auto.fire_rate or 0.1
+		-- NewNPCRaycastWeaponBase:trigger_held (newnpcraycastweaponbase.lua:198-209)
+		-- is the auto path: it only runs for automatic fire. A single-fire crew
+		-- weapon (g17_crew) has no auto interval, so report nil rather than
+		-- inventing the auto fallback's 0.1 for it.
+		if weapon_td.FIRE_MODE == 'auto' and weapon_td.auto and weapon_td.auto.fire_rate then
+			return weapon_td.auto.fire_rate
+		end
+
+		return nil
 	end
 
 	local mode_data = weapon_td.fire_mode_data
