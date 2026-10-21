@@ -54,6 +54,56 @@ local function fresh_context(overrides)
 	return context.get(overrides)
 end
 
+-- Runs fn with a global replaced, restoring the previous value even on failure,
+-- so a failed assertion cannot leak a stub into the rest of the suite.
+local function with_global(name, value, fn)
+	local previous = rawget(_G, name)
+	_G[name] = value
+	local ok, err = pcall(fn)
+	_G[name] = previous
+
+	if not ok then
+		error(err, 0)
+	end
+end
+
+-- Same idea for one field of a tweak_data.character unit: save, set, restore.
+local function with_character_field(unit_type, field, value, fn)
+	local character = fixtures.tweak_data.character[unit_type]
+	local previous = character[field]
+	local had_field = character[field] ~= nil
+
+	character[field] = value
+
+	local ok, err = pcall(fn)
+
+	if had_field then
+		character[field] = previous
+	else
+		character[field] = nil
+	end
+
+	if not ok then
+		error(err, 0)
+	end
+end
+
+-- Same idea for a whole tweak_data.character entry (nil removes the unit).
+local function with_character_unit(unit_type, value, fn)
+	local character = fixtures.tweak_data.character
+	local previous = character[unit_type]
+
+	character[unit_type] = value
+
+	local ok, err = pcall(fn)
+
+	character[unit_type] = previous
+
+	if not ok then
+		error(err, 0)
+	end
+end
+
 --[[
 PlayerManager stand-in. `values` is category -> upgrade -> value; everything it
 does not answer falls back to the caller's default, like PlayerManager does.
@@ -259,27 +309,66 @@ return function(t)
 	t.test('difficulty scales swat, heavy_swat and tank health (no global writes)', function()
 		local _, params = build('amcar')
 
+		local easy = breakpoints.get_all(params, 'easy')
 		local normal = breakpoints.get_all(params, 'normal')
+		local hard = breakpoints.get_all(params, 'hard')
 		local overkill = breakpoints.get_all(params, 'overkill')
+		local overkill_145 = breakpoints.get_all(params, 'overkill_145')
+		local easy_wish = breakpoints.get_all(params, 'easy_wish')
 		local death_sentence = breakpoints.get_all(params, 'overkill_290')
 		local sm_wish = breakpoints.get_all(params, 'sm_wish')
 
-		-- _multiply_all_hp(1, 1) / (2, 2) / (6, 1.5)
+		-- _multiply_all_hp(1, 1) on easy (:11014), normal (:11033) and hard
+		-- (:11959): the police units have the same health on all three.
+		assert_near(t, easy.swat[1], 79.85, 'swat easy')
 		assert_near(t, normal.swat[1], 79.85, 'swat normal')
+		assert_near(t, hard.swat[1], 79.85, 'swat hard')
+		-- (2, 2) on overkill (:12207), (3, 3) on overkill_145 (:12456)
 		assert_near(t, overkill.swat[1], 159.69, 'swat overkill')
+		assert_near(t, overkill_145.swat[1], 239.54, 'swat mayhem')
+		-- (6, 2) on easy_wish (:12649), (6, 1.5) on death sentence (:12815)
+		assert_near(t, easy_wish.swat[1], 479.07, 'swat death wish')
 		assert_near(t, death_sentence.swat[1], 479.07, 'swat death sentence')
 
 		assert_near(t, normal.heavy_swat[1], 159.69, 'heavy_swat normal')
+		assert_near(t, overkill_145.heavy_swat[1], 479.07, 'heavy_swat mayhem')
 		assert_near(t, death_sentence.heavy_swat[1], 958.13, 'heavy_swat death sentence')
 
 		assert_near(t, normal.tank[1], 1996.1, 'tank normal')
+		assert_near(t, overkill_145.tank[1], 5988.29, 'tank mayhem')
 		assert_near(t, death_sentence.tank[1], 11976.57, 'tank death sentence')
 		-- sm_wish overrides tank with 2400 health after the multiply (:13291)
 		assert_near(t, sm_wish.tank[1], 23953.13, 'tank sm_wish override')
 
+		-- death wish doubles the headshot multiplier (hs 2) where death sentence
+		-- keeps 1.5, so the same headshot toggle lands on a different number.
+		local _, headshot = build('amcar', {bonuses = bonus_state({prison_wife = true})})
+
+		-- swat on easy_wish: 480 health, headshot 2 * 2 = 4 -> 479.0625 / 4
+		assert_near(t, breakpoints.get_for_unit('swat', headshot, 'easy_wish')[1], 119.77, 'swat easy_wish headshot')
+		-- swat on death sentence: headshot 2 * 1.5 = 3 -> 479.0625 / 3
+		assert_near(t, breakpoints.get_for_unit('swat', headshot, 'overkill_290')[1], 159.69, 'swat death sentence headshot')
+
 		-- A breakpoint table shrinks and grows with the health, never stays put.
-		t.assert_true(death_sentence.swat[1] > overkill.swat[1], 'death sentence swat above overkill')
+		t.assert_true(death_sentence.swat[1] > overkill_145.swat[1], 'death sentence swat above mayhem')
 		t.assert_true(overkill.swat[1] > normal.swat[1], 'overkill swat above normal')
+		assert_near(t, hard.swat[1], easy.swat[1], 'easy and hard share the swat health')
+	end)
+
+	t.test('a nil difficulty falls back to the context difficulty', function()
+		local _, params = build('amcar', {context = fresh_context({difficulty = 'overkill_290'})})
+
+		assert_near(t, breakpoints.get_for_unit('swat', params)[1], 479.07, 'params context difficulty used')
+		assert_near(t, breakpoints.get_all(params).swat[1], 479.07, 'get_all forwards the same default')
+		assert_near(t, breakpoints.get_for_unit('swat', params, 'normal')[1], 79.85, 'an explicit difficulty wins')
+
+		-- The headshot multiplier follows the fallback too: easy_wish doubles it.
+		local _, headshot = build('amcar', {
+			context = fresh_context({difficulty = 'easy_wish'}),
+			bonuses = bonus_state({prison_wife = true}),
+		})
+
+		assert_near(t, breakpoints.get_for_unit('swat', headshot)[1], 119.77, 'headshot follows the context difficulty')
 	end)
 
 	t.test('weapon damage drives the reached breakpoint, not the table shape', function()
@@ -344,15 +433,19 @@ return function(t)
 		assert_near(t, breakpoints.get_for_unit('swat', plain, 'normal')[1], 79.85, 'without headshot')
 		assert_near(t, breakpoints.get_for_unit('swat', headshot, 'normal')[1], 39.93, 'with headshot (x2)')
 
-		-- weapon.passive_headshot_damage_multiplier = 1.25 (:791-793): x2.5
-		with_managers(managers_stub({values = {weapon = {passive_headshot_damage_multiplier = 1.25}}}), function()
+		-- weapon.passive_headshot_damage_multiplier = 1.25 (:791-793): x2.5.
+		-- PlayerManager resolves the value list to the picked level's number, so
+		-- the stub answers [1] rather than the raw table.
+		local passive_headshot = fixtures.tweak_data.upgrades.values.weapon.passive_headshot_damage_multiplier
+
+		with_managers(managers_stub({values = {weapon = {passive_headshot_damage_multiplier = passive_headshot[1]}}}), function()
 			local _, skill = build('amcar', {bonuses = bonus_state({prison_wife = true})})
 
 			assert_near(t, breakpoints.get_for_unit('swat', skill, 'normal')[1], 31.94, 'headshot with the skill multiplier')
 		end)
 	end)
 
-	t.test('crit toggle scales by the crit chance and ignores the police helmet rule', function()
+	t.test('crit toggle scales by the player crit chance', function()
 		with_managers(managers_stub({critical_hit_chance = 0.2}), function()
 			local _, params = build('amcar', {bonuses = bonus_state({backstab = true})})
 			local data = breakpoints.get_for_unit('swat', params, 'normal')
@@ -373,7 +466,11 @@ return function(t)
 	end)
 
 	t.test('berserker uses the difficulty revive health step', function()
-		with_managers(managers_stub({values = {player = {damage_health_ratio_multiplier = 1}}}), function()
+		local damage_ratio_mul = fixtures.tweak_data.upgrades.values.player.damage_health_ratio_multiplier[1]
+		local revived_health_regain = fixtures.tweak_data.upgrades.values.player.revived_health_regain[1]
+		local melee_ratio_mul = fixtures.tweak_data.upgrades.values.player.melee_damage_health_ratio_multiplier[1]
+
+		with_managers(managers_stub({values = {player = {damage_health_ratio_multiplier = damage_ratio_mul}}}), function()
 			local _, params = build('amcar', {bonuses = bonus_state({wolverine = true})})
 
 			t.assert_equal(params.berserker, 'damage_health_ratio_multiplier', 'automatic weapon uses the damage ratio')
@@ -385,6 +482,27 @@ return function(t)
 			-- death sentence: 480 health and revive step 0.1 (:50-52)
 			--   1 - 0.1 / 0.5 = 0.8  -> 1.8; 479.0625 / 1.8 = 266.1458 -> 266.15
 			assert_near(t, breakpoints.get_for_unit('swat', params, 'overkill_290')[1], 266.15, 'death sentence berserker')
+		end)
+
+		-- player.revived_health_regain = 1.4 (:1061-1063) pushes the revive step
+		-- to 0.56, above the 0.5 threshold: no damage bonus at all.
+		with_managers(managers_stub({values = {player = {
+			damage_health_ratio_multiplier = damage_ratio_mul,
+			revived_health_regain = revived_health_regain,
+		}}}), function()
+			local _, params = build('amcar', {bonuses = bonus_state({wolverine = true})})
+
+			assert_near(t, breakpoints.get_for_unit('swat', params, 'normal')[1], 79.85, 'revive above the threshold gives nothing')
+		end)
+
+		-- A saw uses the melee variant: player.melee_damage_health_ratio_multiplier
+		-- = 2.5 (:595-597) -> 1 + 2.5 * 0.2 = 1.5 on normal.
+		with_managers(managers_stub({values = {player = {melee_damage_health_ratio_multiplier = melee_ratio_mul}}}), function()
+			local saw = {_categories = {'saw'}, _fire_mode_category = 'auto', can_toggle_firemode = function() return false end}
+			local params = breakpoints.prepare_params(saw, fresh_context(), bonus_state({wolverine = true}), {})
+
+			t.assert_equal(params.berserker, 'melee_damage_health_ratio_multiplier', 'saw uses the melee ratio')
+			assert_near(t, breakpoints.get_for_unit('swat', params, 'normal')[1], 53.23, 'melee berserker')
 		end)
 	end)
 
@@ -404,7 +522,11 @@ return function(t)
 	end)
 
 	t.test('body expertise uses automatic_head_shot_add and skips the tank', function()
-		with_managers(managers_stub({values = {weapon = {automatic_head_shot_add = 0.9}}}), function()
+		-- Aced level of weapon.automatic_head_shot_add (:646-649) = 0.9, resolved
+		-- by PlayerManager to a number rather than the raw value list.
+		local automatic_head_shot_add = fixtures.tweak_data.upgrades.values.weapon.automatic_head_shot_add[2]
+
+		with_managers(managers_stub({values = {weapon = {automatic_head_shot_add = automatic_head_shot_add}}}), function()
 			local _, params = build('amcar', {bonuses = bonus_state({body_expertise = true})})
 
 			t.assert_equal(params.body_expertise, true, 'body expertise active for the rifle')
@@ -415,7 +537,7 @@ return function(t)
 		end)
 
 		-- A pistol is not automatic, so the toggle cannot be prepared.
-		with_managers(managers_stub({values = {weapon = {automatic_head_shot_add = 0.9}}}), function()
+		with_managers(managers_stub({values = {weapon = {automatic_head_shot_add = automatic_head_shot_add}}}), function()
 			local _, params = build('glock_17', {bonuses = bonus_state({body_expertise = true})})
 
 			t.assert_equal(params.body_expertise, false, 'pistol has no automatic headshot bonus')
@@ -499,6 +621,13 @@ return function(t)
 
 		t.assert_equal(breakpoints.can_be_critical(frag, 'bullet'), false, 'frag bullets cannot crit')
 		t.assert_equal(breakpoints.can_be_critical(frag, 'explosion'), false, 'frag explosions cannot crit')
+		-- wpn_gre_electric is the third entry copied from tweakdata.lua:2358-2361
+		local electric = {weapon_tweak_data = function()
+			return {categories = {'wpn_gre_electric'}}
+		end}
+
+		t.assert_equal(breakpoints.can_be_critical(electric, 'explosion'), false, 'electric grenades cannot crit')
+		t.assert_equal(breakpoints.can_be_critical(electric, 'tase'), false, 'electric grenades cannot taser-crit')
 
 		-- weapon_tweak_data().ignore_crit_damage (weapontweakdata.lua:21610) is the
 		-- other 248.2 switch the game checks before the category lookup.
@@ -519,19 +648,73 @@ return function(t)
 	end)
 
 	t.test('a missing enemy table answers an empty table instead of throwing', function()
-		local saved = fixtures.tweak_data.character.sniper
-		fixtures.tweak_data.character.sniper = nil
+		with_character_unit('sniper', nil, function()
+			local _, params = build('amcar')
+			local ok, data = pcall(breakpoints.get_for_unit, 'sniper', params, 'normal')
+			local ok_all, all = pcall(breakpoints.get_all, params, 'normal')
 
+			t.assert_true(ok, 'get_for_unit does not throw')
+			t.assert_equal(#hit_counts(data), 0, 'missing enemy has no breakpoints')
+			t.assert_true(ok_all, 'get_all does not throw')
+			t.assert_equal(#hit_counts(all.sniper), 0, 'missing enemy stays empty in get_all')
+		end)
+	end)
+
+	t.test('damage clamps truncate the table', function()
 		local _, params = build('amcar')
-		local ok, data = pcall(breakpoints.get_for_unit, 'sniper', params, 'normal')
-		local ok_all, all = pcall(breakpoints.get_all, params, 'normal')
 
-		fixtures.tweak_data.character.sniper = saved
+		--[[
+		248.2 has no DAMAGE_CLAMP_BULLET / DAMAGE_CLAMP_EXPLOSION on the six table
+		units; the helmeted bulldozer is the real carrier of the bullet clamp
+		(tank_hw, charactertweakdata.lua:2790). Borrow its 235 so the truncation
+		branch is exercised on a table unit.
+		]]
+		with_character_field('swat', 'DAMAGE_CLAMP_BULLET', 235, function()
+			-- normal swat: the one-hit breakpoint (79.85) sits under the clamp
+			assert_near(t, breakpoints.get_for_unit('swat', params, 'normal')[1], 79.85, 'clamp above the table changes nothing')
+			-- death sentence swat: 479.07 > 235, so the row stops at the clamp
+			t.assert_equal(#hit_counts(breakpoints.get_for_unit('swat', params, 'overkill_290')), 0, 'clamp below the one-hit breakpoint truncates')
+		end)
 
-		t.assert_true(ok, 'get_for_unit does not throw')
-		t.assert_equal(#hit_counts(data), 0, 'missing enemy has no breakpoints')
-		t.assert_true(ok_all, 'get_all does not throw')
-		t.assert_equal(#hit_counts(all.sniper), 0, 'missing enemy stays empty in get_all')
+		local _, explosive = build('judge', {
+			blueprint = fixtures.blueprints.judge_explosive,
+			bonuses = bonus_state(),
+		})
+
+		t.assert_equal(explosive.explosion, true, 'explosive params for the clamp case')
+
+		with_character_field('tank', 'DAMAGE_CLAMP_EXPLOSION', 235, function()
+			-- tank explosion_damage_mul = 2 -> one hit needs 1000 damage > 235
+			t.assert_equal(#hit_counts(breakpoints.get_for_unit('tank', explosive, 'normal')), 0, 'explosion clamp truncates')
+			-- swat explosion_damage_mul = 1 -> 79.85 < 235, table kept
+			t.assert_true(#hit_counts(breakpoints.get_for_unit('swat', explosive, 'normal')) > 0, 'a unit under its clamp keeps the table')
+		end)
+
+		-- clamp removed again: the same explosive table comes back
+		t.assert_true(#hit_counts(breakpoints.get_for_unit('tank', explosive, 'normal')) > 0, 'no clamp, no truncation')
+	end)
+
+	t.test('an explosion-blocked mutator empties the explosion table', function()
+		local _, plain = build('judge', {
+			blueprint = fixtures.blueprints.judge_explosive,
+			bonuses = bonus_state(),
+		})
+		local _, blocked = build('judge', {
+			blueprint = fixtures.blueprints.judge_explosive,
+			bonuses = bonus_state(),
+			options = {explosion_blocked = true},
+		})
+
+		t.assert_equal(plain.explosion, true, 'explosive ammo')
+		t.assert_equal(plain.explosion_blocked, false, 'not blocked by default')
+		t.assert_equal(blocked.explosion_blocked, true, 'the flag is carried through the params')
+		t.assert_true(#hit_counts(breakpoints.get_for_unit('swat', plain, 'normal')) > 0, 'unblocked explosion has breakpoints')
+		t.assert_equal(#hit_counts(breakpoints.get_for_unit('swat', blocked, 'normal')), 0, 'blocked explosion has none')
+
+		-- Bullet damage ignores the flag.
+		local _, bullet_blocked = build('amcar', {options = {explosion_blocked = true}})
+
+		t.assert_true(#hit_counts(breakpoints.get_for_unit('swat', bullet_blocked, 'normal')) > 0, 'bullets ignore the flag')
 	end)
 
 	t.test('consolidate sorts, inherits with fill, and trims to amount_wanted', function()
@@ -577,39 +760,38 @@ return function(t)
 	end)
 
 	t.test('breakpoints never write the game difficulty or the tweak data', function()
-		local previous_global = rawget(_G, 'Global')
-		_G.Global = {game_settings = {difficulty = 'overkill_290'}}
+		with_global('Global', {game_settings = {difficulty = 'overkill_290'}}, function()
+			local swat_health = fixtures.tweak_data.character.swat.HEALTH_INIT
+			local revive_step = fixtures.tweak_data.player.damage.REVIVE_HEALTH_STEPS
 
-		local swat_health = fixtures.tweak_data.character.swat.HEALTH_INIT
-		local revive_step = fixtures.tweak_data.player and fixtures.tweak_data.player.damage
-			and fixtures.tweak_data.player.damage.REVIVE_HEALTH_STEPS
+			local _, params = build('amcar', {
+				context = fresh_context({difficulty = 'normal'}),
+				bonuses = bonus_state({prison_wife = true, underdog = true, wolverine = true}),
+			})
 
-		local _, params = build('amcar', {
-			context = fresh_context({difficulty = 'normal'}),
-			bonuses = bonus_state({prison_wife = true, underdog = true, wolverine = true}),
-		})
+			for _, difficulty in ipairs(fixtures.tweak_data.difficulties) do
+				breakpoints.get_all(params, difficulty)
+				breakpoints.character_data('tank', difficulty)
+				breakpoints.difficulty_snapshot(difficulty)
+			end
 
-		for _, difficulty in ipairs(fixtures.tweak_data.difficulties) do
-			breakpoints.get_all(params, difficulty)
-			breakpoints.character_data('tank', difficulty)
-			breakpoints.difficulty_snapshot(difficulty)
-		end
+			t.assert_equal(_G.Global.game_settings.difficulty, 'overkill_290', 'game difficulty untouched')
+			t.assert_equal(fixtures.tweak_data.character.swat.HEALTH_INIT, swat_health, 'enemy health untouched')
+			t.assert_equal(fixtures.tweak_data.player.damage.REVIVE_HEALTH_STEPS, revive_step, 'player tweak data untouched')
 
-		t.assert_equal(_G.Global.game_settings.difficulty, 'overkill_290', 'game difficulty untouched')
-		t.assert_equal(fixtures.tweak_data.character.swat.HEALTH_INIT, swat_health, 'enemy health untouched')
-		t.assert_equal(fixtures.tweak_data.player and fixtures.tweak_data.player.damage
-			and fixtures.tweak_data.player.damage.REVIVE_HEALTH_STEPS, revive_step, 'player tweak data untouched')
+			-- The live HEALTH_INIT is not the source of the maths: changing it does
+			-- not move a breakpoint.
+			local before = breakpoints.get_for_unit('swat', params, 'normal')
 
-		-- The live HEALTH_INIT is not the source of the maths: changing it does
-		-- not move a breakpoint.
-		local before = breakpoints.get_for_unit('swat', params, 'normal')
-		fixtures.tweak_data.character.swat.HEALTH_INIT = 999
-		local after = breakpoints.get_for_unit('swat', params, 'normal')
-		fixtures.tweak_data.character.swat.HEALTH_INIT = swat_health
+			with_character_field('swat', 'HEALTH_INIT', 999, function()
+				local after = breakpoints.get_for_unit('swat', params, 'normal')
 
-		assert_near(t, after[2], before[2], 'live HEALTH_INIT is ignored')
+				assert_near(t, after[2], before[2], 'live HEALTH_INIT is ignored')
+			end)
 
-		_G.Global = previous_global
+			t.assert_equal(fixtures.tweak_data.character.swat.HEALTH_INIT, swat_health, 'health restored')
+		end)
+
 		context.invalidate()
 	end)
 end
