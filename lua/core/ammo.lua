@@ -76,6 +76,9 @@ function ammo.ammo_pickup(weapon, context)
 	local pickup = weapon._ammo_pickup
 
 	if pickup == nil then
+		-- Defense for hand-built weapon tables: WeaponModel sets _ammo_pickup in
+		-- build, this mirrors tweak_data.weapon[name_id].AMMO_PICKUP
+		-- (newraycastweaponbase.lua:1355).
 		local tweak = weapon_tweak_data(weapon)
 		pickup = tweak and tweak.AMMO_PICKUP
 	end

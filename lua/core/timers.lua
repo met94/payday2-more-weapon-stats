@@ -12,14 +12,21 @@ Public API:
 	timers.swap_speed_multiplier(weapon, context) -> multiplier|nil
 		PlayerStandard:_get_swap_speed_multiplier (playerstandard.lua:5571).
 	timers.reload_full(weapon, ammo_remaining, context) -> seconds|nil
-		Full reload: the empty-clip reload when `ammo_remaining` is 0 or nil,
-		the tactical one otherwise.
+		Full reload: the empty-clip reload when `ammo_remaining` is 0. A nil
+		`ammo_remaining` falls back to the weapon's own clip accessor
+		(get_ammo_remaining_in_clip); when that is unset too the reload is
+		reported as an empty-clip reload.
 	timers.reload_partial(weapon, rounds_missing, context) -> partial|nil, shell|nil
 		The "one round short" reload the row shows next to the single-shell time.
 		`rounds_missing` defaults to 1 and mirrors the v76 row, which called
 		mws_reload_x_ammo(wbase, 1) — one round missing, not one round left.
 		Single-shell weapons (clip max == 1) return nil so the row blanks, like
 		the old mws_reload_partial did.
+		The single-shell time uses the tactical (`not_empty`) shell timer. v76
+		called reload_shell_expire_t() without that flag, i.e. the empty variant;
+		for weapons with an explicit timers.shotgun_reload table (ultima,
+		weapontweakdata.lua:28262-28304) that showed the empty-path fallback
+		(0.5667 s) instead of ultima's tactical reload_shell (1.0 s).
 	timers.equip_delay(weapon, context) -> equip|nil, unequip|nil
 		PlayerStandard:_start_action_equip_weapon / _start_action_unequip_weapon.
 

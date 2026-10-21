@@ -846,6 +846,10 @@ local function build(name_id, blueprint, context, cosmetics, stat_id, npc)
 	model.parts = parts
 
 	model._ammo_data = ammo_data
+	-- NewRaycastWeaponBase:replenish (newraycastweaponbase.lua:1355) and
+	-- WeaponAmmo:replenish (weaponammo.lua:51) read AMMO_PICKUP off the active
+	-- weapon tweak entry; crew entries have none.
+	model._ammo_pickup = name_td.AMMO_PICKUP
 	model._custom_stats = custom_stats
 	model._current_stats_indices = indices
 	model._current_stats = current_stats
