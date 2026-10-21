@@ -80,7 +80,7 @@ edit made while the game is running is lost). The value must be a JSON boolean.
 | --- | --- | --- | --- |
 | `ammo_pickup` | Ammo pickup | on | Rounds gained per pickup: the minimum and the maximum of the pickup range (maximum after ` \| `). |
 | `equip_delay` | Equip delays | on | Time to equip and time to unequip (unequip after ` \| `). |
-| `falloff` | Dmg. modifier | on | Damage multipliers near/far, or the optimal range in metres for shotguns. |
+| `falloff` | Dmg. modifier | on | Damage multipliers near/far, or the optimal range in metres for shotguns. Blank on weapons whose tweak data has no falloff (`damage_falloff`/`damage_near`/`damage_far`) - in 248.2 that is every rifle, e.g. the Lion's Roar (`vhs`). The range chart follows the same data, so it is hidden for them too; v76 behaved identically. |
 | `recoil_horiz` | Recoil L./R. | on | Horizontal recoil kick, left and right. |
 | `recoil_vert` | Recoil U./D. | on | Vertical recoil kick, up and down. |
 | `reload_full` | Reload | on | Full-magazine reload time. |
