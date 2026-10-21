@@ -428,14 +428,22 @@ function BlackMarketGui:_mws_update_breakpoints()
 		BlackMarketManager.equipped_secondary = mws_equipped_selected
 	end
 
-	local params = self:mws_prepare_breakpoints_params(wbase)
-	local breakpoints_data = self:mws_get_all_breakpoints(params)
+	local ok, err = pcall(function()
+		local params = self:mws_prepare_breakpoints_params(wbase)
+		local breakpoints_data = self:mws_get_all_breakpoints(params)
 
-	self.mws_bp_current_damage = wbase._damage * 10
-	self.mws_bp_ref_damage, self.mws_breakpoints = self:mws_consolidate_breakpoints(breakpoints_data, self.mws_bp_current_damage, #self.mws_bp_damage)
+		self.mws_bp_current_damage = wbase._damage * 10
+		self.mws_bp_ref_damage, self.mws_breakpoints = self:mws_consolidate_breakpoints(breakpoints_data, self.mws_bp_current_damage, #self.mws_bp_damage)
+	end)
 
+	-- Restore on both paths: an error must not leave the manager class patched.
 	BlackMarketManager.equipped_primary = original_primary
 	BlackMarketManager.equipped_secondary = original_secondary
+
+	if not ok then
+		log('[More Weapon Stats] breakpoint update failed: ' .. tostring(err))
+		return
+	end
 
 	for _, cell_dmg in pairs(self.mws_bp_bullet) do
 		cell_dmg:set_text('-')

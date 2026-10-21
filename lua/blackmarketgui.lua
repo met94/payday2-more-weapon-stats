@@ -679,18 +679,29 @@ function BlackMarketGui:mws_bp_hide_callback(data)
 	end
 end
 
-local mws_original_blackmarketgui_showstats = BlackMarketGui.show_stats
-function BlackMarketGui:show_stats()
-	self:_show_stats()
+local function mws_pcall(what, fct)
+	local ok, err = pcall(fct)
+	if not ok then
+		log(('[More Weapon Stats] %s: %s'):format(what, tostring(err)))
+	end
 end
 
-function BlackMarketGui:_show_stats()
-	if _henchmen_weapon and self:mws_is_buying() then
-		self._slot_data.comparision_data = nil
-	end
+local mws_original_blackmarketgui_showstats = BlackMarketGui.show_stats
+function BlackMarketGui:show_stats()
+	mws_pcall('show_stats pre-clear', function()
+		if _henchmen_weapon and self:mws_is_buying() then
+			self._slot_data.comparision_data = nil
+		end
+	end)
 
 	mws_original_blackmarketgui_showstats(self)
 
+	mws_pcall('show_stats', function()
+		self:_show_stats()
+	end)
+end
+
+function BlackMarketGui:_show_stats()
 	local slot_data = self._slot_data
 
 	-- breakpoints
@@ -839,10 +850,10 @@ function BlackMarketGui:_show_stats()
 			local value_equipped, value_selected = '', ''
 			if stat.name == 'magazine' then
 				if wbase_equipped then
-					value_equipped = wbase_equipped:ammo_base():get_ammo_max_per_clip()
+					value_equipped = wbase_equipped:get_ammo_max_per_clip()
 				end
 				if wbase_selected then
-					value_selected = wbase_selected:ammo_base():get_ammo_max_per_clip()
+					value_selected = wbase_selected:get_ammo_max_per_clip()
 				end
 			elseif stat.name == 'fire_rate' then
 				if wbase_equipped then
