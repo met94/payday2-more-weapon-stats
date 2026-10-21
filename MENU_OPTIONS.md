@@ -44,19 +44,6 @@ Black Market) toggles between the stat rows and the breakpoint table, and it no
 longer previews the weapon. When off, preview behaves normally and the separate
 **Show breakpoints** / **Hide breakpoints** button drives the table.
 
-### Maximum clicks per second — default **5** (slider: 3 – 8, step 1)
-
-*"Used in breakpoints calculations for time limited bonuses when weapon's fire
-rate is physically impossible to reach."*
-
-Semi-auto, burst and other non-full-auto weapons are limited by how fast a human
-can pull the trigger. The breakpoint table uses this value as your assumed click
-rate when a skill bonus is time-limited (Trigger Happy, Overkill) and the
-weapon's own fire rate would be faster than a player can click. Higher values
-show slightly better breakpoints for fast-firing semi-autos; akimbo weapons get
-double this rate, as in the base game's own handling. Full-auto weapons always
-use their real fire rate and ignore this setting.
-
 ### Enable trigger happy for 1st bullet — default **on**
 
 *"If disabled, when calculating breakpoints with trigger happy, the first bullet
@@ -68,6 +55,20 @@ magazine's breakpoints look best-case. Off: the first bullet is treated as the
 trigger shot without the bonus, and the buff applies from the second bullet —
 the realistic reading when you open fire from a cold start.
 
+### Maximum clicks per second — default **5** (slider: 3 – 8, step 1)
+
+*"Used in breakpoints calculations for time limited bonuses when weapon's fire
+rate is physically impossible to reach."*
+
+Semi-auto, burst and other non-full-auto weapons are limited by how fast a human
+can pull the trigger. The breakpoint table uses this value as your assumed click
+rate when the **Trigger Happy** bonus is enabled and the weapon's own fire rate
+would be faster than a player can click, so it decides how many shots fit inside
+the skill's stacking window. Higher values show slightly better breakpoints for
+fast-firing pistols; akimbo weapons get double this rate, as in the base game's
+own handling. Full-auto weapons always use their real fire rate and ignore this
+setting.
+
 ## Display rows (settings file only)
 
 These nine keys live under `"display"` in
@@ -77,7 +78,7 @@ edit made while the game is running is lost). The value must be a JSON boolean.
 
 | Key | Row in the panel | Default | Shows |
 | --- | --- | --- | --- |
-| `ammo_pickup` | Ammo pickup | on | Ammo gained per pickup, near-range and far-range values. |
+| `ammo_pickup` | Ammo pickup | on | Rounds gained per pickup: the minimum and the maximum of the pickup range (maximum after ` \| `). |
 | `equip_delay` | Equip delays | on | Time to equip and time to unequip (unequip after ` \| `). |
 | `falloff` | Dmg. modifier | on | Damage multipliers near/far, or the optimal range in metres for shotguns. |
 | `recoil_horiz` | Recoil L./R. | on | Horizontal recoil kick, left and right. |
@@ -93,12 +94,14 @@ Notes:
   below move up.
 - A **missing** key counts as on — deleting `spread_vert` from the file turns the
   vertical spread row *on*. Keep the key with `false` to keep it hidden.
-- Rows the mod cannot compute for a weapon (melee, throwables, a locked slot,
-  a saw with no spread) stay blank regardless of these switches.
-- Melee-only rows (attack delay, cooldown, unequip delay, special type, special
-  time) and henchman/NPC rows (damage per hit chance, rate of fire, reload, aim
-  delay, falloff) are not covered by `display`; they follow the weapon category
-  instead.
+- Rows the mod cannot compute for a weapon (throwables, a locked slot, a saw
+  with no spread) stay blank regardless of these switches.
+- Melee rows (attack delay, cooldown, unequip delay, special type, special time)
+  are outside `display` entirely — they always follow the weapon category.
+- Henchman/NPC rows share the same filter: their **Spread** row is hidden by
+  `display.spread` and their **Reload** row by `display.reload_full`. The other
+  henchman rows (rate of fire, burst fire, aim delay, damage per hit chance) have
+  no `display` key and are always shown.
 
 Example:
 
@@ -126,7 +129,7 @@ Example:
 
 ## Breakpoint preview difficulty (`last_used_difficulty`)
 
-*Internal, persisted; default `overkill_290` (Mayhem).*
+*Internal, persisted; default `overkill_290` (Death Wish).*
 
 Set by the risk-icon picker at the bottom of the breakpoint table and stored so
 your last choice is restored next session. It selects **which difficulty the
@@ -135,7 +138,9 @@ nothing else. It no longer changes the difficulty the game is running, and
 switching it does not alter your contract, your lobby or your next heist.
 
 - Single-player: click the risk icons to preview any difficulty; clicking the
-  icon that is already selected steps one rank down (kept from v76).
+  icon that is already selected steps one rank down (kept from v76). The lowest
+  icon has nothing below it, so that step stops at Normal — there is no way to
+  preview a lower difficulty.
 - Multiplayer / an active Crime Spree: the picker is read-only and follows the
   difficulty the game is actually running; the Crime Spree picker is hidden
   entirely, as in v76.
