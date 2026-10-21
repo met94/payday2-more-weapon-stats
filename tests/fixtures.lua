@@ -273,6 +273,20 @@ local gang_member_weapon = {
 	},
 }
 
+local function deep_copy(value)
+	if type(value) ~= 'table' then
+		return value
+	end
+
+	local copy = {}
+
+	for key, entry in pairs(value) do
+		copy[key] = deep_copy(entry)
+	end
+
+	return copy
+end
+
 -- :9670-9676: the aliases collapse onto the tables above; `rifle` is a deep
 -- clone of is_rifle with autofire_rounds removed (:9674-9675), not the same
 -- table, so it is modelled separately.
@@ -282,10 +296,7 @@ gang_member_weapon.is_bullpup = gang_member_weapon.is_rifle
 gang_member_weapon.mac11 = gang_member_weapon.is_rifle
 gang_member_weapon.akimbo_pistol = gang_member_weapon.is_pistol
 
-gang_member_weapon.rifle = {}
-for key, value in pairs(gang_member_weapon.is_rifle) do
-	gang_member_weapon.rifle[key] = value
-end
+gang_member_weapon.rifle = deep_copy(gang_member_weapon.is_rifle)
 gang_member_weapon.rifle.autofire_rounds = nil
 
 -- :3950-3952: the crew weapon the gang-member preset spawns.
