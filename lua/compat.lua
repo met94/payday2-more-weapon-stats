@@ -39,13 +39,17 @@ Verified against the live mods in
 		shows the resulting `_setup` chain.
 
 	The Fixes 32.7 (supermod, priority -10, post-hooks only)
-		Wraps BlackMarketManager:_get_weapon_stats (strips `cosmetics.bonus`
-		for color skins) and reads Global.game_settings.difficulty. MWS reads
-		the crafted table and the difficulty but never writes either, so the
-		Fixes' reads stay authoritative. MWS does not call that wrapper; its
-		own model treats `cosmetics.bonus` as a lookup key, so a colour skin's
-		table-valued bonus resolves to no bonus instead of reaching the
-		arithmetic crash the Fixes wrapper guards against.
+		When TheFixesPreventer.crash_weapon_colors_have_boost_field is not set,
+		it wraps BlackMarketManager:_get_weapon_stats and nils
+		`cosmetics.bonus` on the table it receives for a colour skin; it also
+		wraps weapon_unlocked_by_crafted and reads
+		Global.game_settings.difficulty. MWS reads the crafted table and the
+		difficulty but never writes either, so the Fixes' reads stay
+		authoritative. MWS does not call that wrapper; its own model treats
+		`cosmetics.bonus` as a lookup key, so a colour skin's table-valued
+		bonus resolves to no bonus instead of reaching the arithmetic crash the
+		Fixes wrapper guards against (whether the Fixes already nil'd it or
+		not).
 
 	Anticrash v23 (priority 500, hooks weaponfactorymanager and menumanager)
 		Sanitizes blueprints in WeaponFactoryManager:unpack_blueprint_from_string
@@ -65,6 +69,17 @@ Verified against the live mods in
 		too, so the two wrappers nest. EHI writes
 		LocalizationManager._custom_localizations; MWS only calls
 		LocalizationManager:text.
+
+Wrapper contract:
+	MWS owns BlackMarketGui._setup, show_stats, update_info_text, set_info_text,
+	mouse_pressed, mouse_moved, close, show_btns, _update_borders and
+	BlackMarketGuiSlotItem.init/select/deselect. Except for mouse_moved, each
+	captures the method it found at load and calls it (so a wrapper installed
+	earlier, like VHUD/EHI's _setup or SDSS's mouse_pressed, still runs).
+	mouse_moved is the deliberate exception: for its own stance and range-chart
+	hover hits it returns true/'link' without calling the captured original,
+	exactly as v76 did; every other position falls through to the original. No
+	live mod among the eight wraps mouse_moved, so nothing is dropped there.
 
 Cosmetics contract (SDSS/OSA/HDS):
 	The rewrite reads the chosen skin from the crafted table
