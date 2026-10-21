@@ -411,8 +411,7 @@ return function(t)
 	end)
 
 	t.test('steelsight_range_inc stretches the far end of the range', function()
-		-- upgradestweakdata.lua:566 shotgun.steelsight_range_inc (real table at
-		-- :566-568 holds 1.5 for the first level)
+		-- upgradestweakdata.lua:1193-1195 shotgun.steelsight_range_inc = {1.5}
 		with_managers(managers_stub({shotgun = {steelsight_range_inc = 1.5}}), function()
 			local ctx = fresh_context({steelsight = true})
 			local judge = weapon.new('judge', nil, ctx)
@@ -457,10 +456,15 @@ return function(t)
 
 	t.test('ammo_pickup returns the AMMO_PICKUP range', function()
 		local ctx = fresh_context()
-		local amcar_min, amcar_max = ammo.ammo_pickup(weapon.new('amcar', nil, ctx), ctx)
+		local amcar = weapon.new('amcar', nil, ctx)
+		local amcar_min, amcar_max = ammo.ammo_pickup(amcar, ctx)
 
+		-- 220 * AR_HIGH_CAPACITY {0.03, 0.055} (weapontweakdata.lua:6439-6441)
+		t.assert_type(amcar._ammo_pickup, 'table', 'model carries the tweak pickup table')
+		assert_near(t, amcar._ammo_pickup[1], 6.6, 'model pickup min')
+		assert_near(t, amcar._ammo_pickup[2], 12.1, 'model pickup max')
 		assert_near(t, amcar_min, 6.6, 'amcar pickup min')
-		assert_near(t, amcar_max, 9.9, 'amcar pickup max')
+		assert_near(t, amcar_max, 12.1, 'amcar pickup max')
 
 		local sniper_min, sniper_max = ammo.ammo_pickup(weapon.new('m95', nil, ctx), ctx)
 		assert_near(t, sniper_min, 0.1, 'thanatos pickup min')
@@ -474,6 +478,7 @@ return function(t)
 		local crew_min, crew_max = ammo.ammo_pickup(weapon.new_from_slot('new_m4', nil, {npc = true}), ctx)
 		t.assert_nil(crew_min, 'crew weapons have no pickup data')
 		t.assert_nil(crew_max, 'crew weapons have no pickup max')
+		t.assert_nil(weapon.new_from_slot('new_m4', nil, {npc = true})._ammo_pickup, 'crew model has no pickup table')
 	end)
 
 	t.test('ammo_pickup applies the pick-up skills and crew scavenge', function()
@@ -491,7 +496,7 @@ return function(t)
 
 			-- 1 + 0.35 + 0.3 + 0.15 = 1.8
 			assert_near(t, min_amount, 6.6 * 1.8, 'pickup min with skills and scavenge')
-			assert_near(t, max_amount, 9.9 * 1.8, 'pickup max with skills and scavenge')
+			assert_near(t, max_amount, 12.1 * 1.8, 'pickup max with skills and scavenge')
 		end)
 
 		local ctx = fresh_context()

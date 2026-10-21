@@ -222,8 +222,8 @@ fixtures.tweak_data = {
 			CLIP_AMMO_MAX = 20,
 			NR_CLIPS_MAX = 11,
 			AMMO_MAX = 20 * 11,
-			-- :7245 AMMO_MAX * PICKUP.AR_HIGH_CAPACITY (0.03, 0.055)
-			AMMO_PICKUP = {6.6, 9.9},
+			-- :7245 AMMO_MAX * PICKUP.AR_HIGH_CAPACITY (0.03, 0.055, :6439-6441)
+			AMMO_PICKUP = {6.6, 12.1},
 			-- :7230-7233
 			timers = {reload_not_empty = 2.25, reload_empty = 3, unequip = 0.6, equip = 0.55},
 			FIRE_MODE = 'auto',
