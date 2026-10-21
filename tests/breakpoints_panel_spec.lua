@@ -120,6 +120,239 @@ local function new_panel()
 	return panel
 end
 
+-- Engine widget stand-ins -----------------------------------------------------
+--
+-- PAYDAY 2 panels/bitmaps/texts are C engine objects: a userdata with a
+-- metatable, not a Lua table. `newproxy(true)` models that exactly, so a guard
+-- like `type(widget) == 'table'` rejects them and the v79 UI silently vanished
+-- in game while the table fakes above kept the specs green.
+
+local engine_panel, engine_text, engine_bitmap
+
+local function new_engine_widget(state, methods)
+	local proxy = newproxy(true)
+	local meta = getmetatable(proxy)
+
+	meta.__index = function(_, key)
+		if key == '_state' then
+			return state
+		end
+
+		return methods[key]
+	end
+
+	return proxy
+end
+
+function engine_text(data)
+	local state = {
+		name = data and data.name,
+		text = data and data.text or '?',
+		color = data and data.color,
+		alpha = (data and data.alpha) or 1,
+		inside = not (data and data.inside == false),
+		x = data and data.x or 0,
+		y = data and data.y or 0,
+		w = data and data.w or 40,
+		h = data and data.h or 20,
+	}
+
+	local methods = {}
+
+	methods.set_text = function(_, value)
+		state.text = value
+	end
+
+	methods.text = function()
+		return state.text
+	end
+
+	methods.set_color = function(_, value)
+		state.color = value
+	end
+
+	methods.color = function()
+		return state.color
+	end
+
+	methods.set_alpha = function(_, value)
+		state.alpha = value
+	end
+
+	methods.alpha = function()
+		return state.alpha
+	end
+
+	methods.name = function()
+		return state.name
+	end
+
+	methods.inside = function()
+		return state.inside
+	end
+
+	methods.set_w = function(_, value)
+		state.w = value
+	end
+
+	methods.w = function()
+		return state.w
+	end
+
+	methods.h = function()
+		return state.h
+	end
+
+	methods.right = function()
+		return state.x + state.w
+	end
+
+	methods.top = function()
+		return state.top or 200
+	end
+
+	methods.text_rect = function()
+		return 0, 0, state.w, state.h
+	end
+
+	methods.rotate = function() end
+
+	return new_engine_widget(state, methods)
+end
+
+function engine_bitmap(data)
+	local bitmap = engine_text(data)
+
+	return bitmap
+end
+
+function engine_panel(data)
+	local state = {
+		x = data and data.x or 0,
+		y = data and data.y or 0,
+		w = data and data.w or 200,
+		h = data and data.h or 200,
+		visible = not (data and data.visible == false),
+		inside = not (data and data.inside == false),
+		children = {},
+	}
+
+	local methods = {}
+
+	methods.panel = function(_, child_data)
+		return engine_panel(child_data)
+	end
+
+	methods.text = function(_, text_data)
+		return engine_text(text_data)
+	end
+
+	methods.bitmap = function(_, bitmap_data)
+		return engine_bitmap(bitmap_data)
+	end
+
+	methods.rect = function()
+		return engine_panel({ w = 1, h = 1 })
+	end
+
+	methods.child = function(_, name)
+		return state.children[name]
+	end
+
+	methods.w = function()
+		return state.w
+	end
+
+	methods.h = function()
+		return state.h
+	end
+
+	methods.y = function()
+		return state.y
+	end
+
+	methods.top = function()
+		return state.top or state.y
+	end
+
+	methods.right = function()
+		return state.right or (state.x + state.w)
+	end
+
+	methods.set_w = function(_, value)
+		state.w = value
+	end
+
+	methods.set_h = function(_, value)
+		state.h = value
+	end
+
+	methods.set_top = function(_, value)
+		state.top = value
+	end
+
+	methods.set_bottom = function(_, value)
+		state.bottom = value
+	end
+
+	methods.set_right = function(_, value)
+		state.right = value
+	end
+
+	methods.set_center_x = function(_, value)
+		state.center_x = value
+	end
+
+	methods.show = function()
+		state.visible = true
+	end
+
+	methods.hide = function()
+		state.visible = false
+	end
+
+	methods.visible = function()
+		return state.visible
+	end
+
+	methods.inside = function()
+		return state.inside
+	end
+
+	return new_engine_widget(state, methods)
+end
+
+-- BlackMarketGuiButtonItem stand-in: new_button() only needs :new to exist.
+local function fake_button_class()
+	local class = {}
+
+	function class:new(panel, data)
+		return {
+			_data = data,
+			_panel = panel,
+		}
+	end
+
+	return class
+end
+
+-- A gui whose panels are engine (userdata) objects, as in game.
+local function fake_engine_gui()
+	local gui = {
+		_panel = engine_panel({ w = 400, h = 300 }),
+		_buttons = engine_panel({ w = 380, h = 30 }),
+		_weapon_info_panel = engine_panel({ w = 340, h = 260 }),
+		_btns = {},
+		_selected_slot = 1,
+	}
+
+	function gui.show_btns()
+		gui.show_btns_called = true
+	end
+
+	return gui
+end
+
 local function new_picker(difficulty, can_set)
 	local picker = {
 		can_set_difficulty = can_set ~= false,
@@ -294,6 +527,30 @@ local function with_global(name, value, fn)
 	end
 end
 
+-- tweak_data.skilltree.skills stand-in: the bonus panel reads
+-- skills[name].icon_xy to build each bitmap. Restored on error.
+local function with_skill_icons(icons, fn)
+	-- The installed global, not this chunk's fixtures copy: an earlier spec may
+	-- have installed its own table.
+	local data = rawget(_G, 'tweak_data') or fixtures.tweak_data
+	local previous = data.skilltree
+	local skills = {}
+
+	for name, icon_xy in pairs(icons) do
+		skills[name] = { icon_xy = icon_xy }
+	end
+
+	data.skilltree = { skills = skills }
+
+	local ok, err = pcall(fn)
+
+	data.skilltree = previous
+
+	if not ok then
+		error(err, 0)
+	end
+end
+
 -- Settings field with restore-on-error.
 local function with_setting(key, value, fn)
 	local previous = settings[key]
@@ -348,7 +605,7 @@ return function(t)
 			-- unit does not reach at this damage value.
 			t.assert_equal(cell_text(gui, 3, 'tank'), '32', 'row 3 bulldozer inherited')
 
-			t.assert_equal(#gui.mws_breakpoints, 5, 'consolidated rows')
+			t.assert_equal(#gui.mws_bp_list, 5, 'consolidated rows')
 			t.assert_equal(gui.mws_bp_panel:visible(), true, 'panel shown for a real slot')
 			t.assert_true(math.abs(gui.mws_bp_current_damage - 62) < 1e-9, 'CAR-4 damage in table units')
 			t.assert_true(math.abs(gui.mws_bp_ref_damage - 59.77) < 1e-9, 'reached breakpoint')
@@ -733,6 +990,105 @@ return function(t)
 
 			t.assert_true(refresh_logged, 'render failure logged')
 			t.assert_true(clear_logged, 'recovery clear failure logged')
+		end)
+	end)
+
+	t.test('init builds the breakpoint UI on engine (userdata) panels', function()
+		with_managers({}, function()
+			with_global('BlackMarketGuiButtonItem', fake_button_class(), function()
+				with_skill_icons({ prison_wife = { 1, 2 } }, function()
+					local gui = fake_engine_gui()
+
+					breakpoints_panel.init(gui)
+
+					t.assert_type(gui.mws_bp_panel, 'userdata', 'breakpoint panel built on the engine panel')
+					t.assert_type(gui.mws_bp_switch_panel, 'userdata', 'show/hide switch panel built')
+					t.assert_true(gui.mws_bp_show_btn ~= nil, 'show button built')
+					t.assert_true(gui.mws_bp_hide_btn ~= nil, 'hide button built')
+					t.assert_true(gui._btns.mws_bp_show ~= nil, 'show button registered in _btns')
+					t.assert_true(gui._btns.mws_bp_hide ~= nil, 'hide button registered in _btns')
+					t.assert_equal(gui.show_btns_called, true, 'show_btns refreshed after the build')
+					t.assert_type(gui.mws_bp_bonus_panel, 'userdata', 'bonus panel built')
+					t.assert_type(gui.mws_bp_unit_texts[1], 'userdata', 'unit labels built')
+					t.assert_type(gui.mws_bp_damage[1], 'userdata', 'damage cells built')
+					t.assert_type(gui.mws_bp_bullet[1], 'userdata', 'hit cells built')
+					t.assert_type(gui.mws_difficulty_picker, 'table', 'picker state stays a Lua table')
+					t.assert_type(gui.mws_difficulty_picker.panel, 'userdata', 'picker panel built')
+					t.assert_type(gui.mws_difficulty_picker.difficulty_bitmaps[7], 'userdata', 'risk icons built')
+				end)
+			end)
+		end)
+	end)
+
+	t.test('init without a button class still builds the table', function()
+		with_managers({}, function()
+			with_global('BlackMarketGuiButtonItem', nil, function()
+				with_skill_icons({ prison_wife = { 1, 2 } }, function()
+					local gui = fake_engine_gui()
+
+					breakpoints_panel.init(gui)
+
+					t.assert_type(gui.mws_bp_panel, 'userdata', 'table built without buttons')
+					t.assert_nil(gui.mws_bp_show_btn, 'no show button without the class')
+					t.assert_nil(gui.mws_bp_hide_btn, 'no hide button without the class')
+				end)
+			end)
+		end)
+	end)
+
+	t.test('a userdata bonus bitmap is named, found and toggled', function()
+		with_managers({}, function()
+			with_global('BlackMarketGuiButtonItem', fake_button_class(), function()
+				with_skill_icons({ prison_wife = { 1, 2 } }, function()
+					local gui = fake_engine_gui()
+
+					breakpoints_panel.init(gui)
+
+					local bitmap = gui.mws_bp_skill_bitmaps[1]
+
+					t.assert_type(bitmap, 'userdata', 'bonus icon is an engine bitmap')
+					t.assert_equal(bitmap:name(), 'prison_wife', 'bitmap name read through the engine object')
+					t.assert_equal(bitmap:alpha(), breakpoints_panel.mws_alpha_disabled, 'available toggle starts dimmed')
+
+					t.assert_true(breakpoints_panel.bonus_at(gui, 10, 10) == bitmap, 'userdata toggle found under the cursor')
+
+					breakpoints_panel.click_bonus(gui, bitmap)
+					t.assert_equal(gui.mws_bonuses.prison_wife.checked, true, 'click reaches the bonus state')
+					t.assert_equal(bitmap:alpha(), breakpoints_panel.mws_alpha_enabled, 'toggle drawn as checked')
+
+					-- By name, the same path the settings/test helpers use.
+					breakpoints_panel.set_bonus_state(gui, 'prison_wife', false)
+					t.assert_equal(gui.mws_bonuses.prison_wife.checked, false, 'name lookup reaches the state')
+					t.assert_equal(bitmap:alpha(), breakpoints_panel.mws_alpha_disabled, 'toggle drawn as unchecked')
+				end)
+			end)
+		end)
+	end)
+
+	t.test('clear() keeps mws_breakpoints boolean and drops the row list', function()
+		with_managers({}, function()
+			local gui, ctx = render()
+
+			gui.mws_breakpoints = true
+			breakpoints_panel.refresh(gui, ctx)
+
+			t.assert_equal(gui.mws_breakpoints, true, 'open flag untouched by refresh')
+			t.assert_equal(#gui.mws_bp_list, 5, 'row list stored separately')
+
+			breakpoints_panel.clear(gui)
+
+			t.assert_equal(gui.mws_breakpoints, true, 'open flag survives clear()')
+			t.assert_nil(gui.mws_bp_list, 'row list cleared')
+			t.assert_nil(gui.mws_bp_current_damage, 'current damage cleared')
+
+			-- A closed table must stay closed: an empty list here used to read as
+			-- "open" because a table is truthy.
+			gui.mws_breakpoints = false
+			breakpoints_panel.refresh(gui, ctx)
+			breakpoints_panel.clear(gui)
+
+			t.assert_equal(gui.mws_breakpoints, false, 'closed flag survives refresh + clear')
+			t.assert_nil(gui.mws_bp_list, 'row list cleared while closed')
 		end)
 	end)
 end

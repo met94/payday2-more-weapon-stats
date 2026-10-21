@@ -28,9 +28,11 @@ Public API:
 		locked slots, silently returns when the slot has no weapon model, and
 		blanks every cell before filling so a shorter table cannot leave stale
 		values behind. Sets gui.mws_bp_current_damage, gui.mws_bp_ref_damage and
-		gui.mws_breakpoints.
+		gui.mws_bp_list (the row list; gui.mws_breakpoints stays the open/closed
+		boolean owned by the show/hide callbacks).
 	breakpoints_panel.clear(gui)
-		Blanks every damage and hit cell (also clears the current/ref damage).
+		Blanks every damage and hit cell (also clears the current/ref damage and
+		the row list). Never touches gui.mws_breakpoints.
 	breakpoints_panel.sync_bonuses(gui, context) -> table
 		Recomputes bonus availability/checked state from the context and updates
 		the bitmap alphas. The player's toggles survive a refresh and a Black
@@ -586,8 +588,15 @@ local function sorted_bonus_names(state)
 	return names
 end
 
+--[[
+Panels and bitmaps are engine objects (userdata with a metatable), not Lua
+tables: a `type(x) == 'table'` guard rejects them and silently disables the UI.
+Only genuine Lua tables (bonus state, bitmap arrays, the picker) are type-checked
+as tables; widgets get a nil/truthiness check and their methods are probed with
+type(method) == 'function', which works on both.
+]]
 local function bonus_bitmap_name(bitmap)
-	if type(bitmap) == 'table' and type(bitmap.name) == 'function' then
+	if bitmap and type(bitmap.name) == 'function' then
 		return bitmap:name()
 	end
 
@@ -857,7 +866,10 @@ function breakpoints_panel.clear(gui)
 
 	gui.mws_bp_current_damage = nil
 	gui.mws_bp_ref_damage = nil
-	gui.mws_breakpoints = {}
+	-- The row list is not the open/closed flag: gui.mws_breakpoints is a boolean
+	-- owned by the show/hide callbacks, and an empty table here would read as
+	-- "open" in every blackmarketgui branch that tests it.
+	gui.mws_bp_list = nil
 end
 
 local function fill_cells(gui, list, ref_damage)
@@ -985,7 +997,7 @@ function breakpoints_panel.refresh(gui, context)
 
 		gui.mws_bp_current_damage = damage
 		gui.mws_bp_ref_damage = ref_damage
-		gui.mws_breakpoints = list
+		gui.mws_bp_list = list
 
 		fill_cells(gui, list, ref_damage)
 	end)
@@ -1019,12 +1031,14 @@ local function new_button(gui, panel, data)
 end
 
 -- v76: show/hide breakpoints button pair on its own panel above the weapon info.
+-- _panel/_buttons/_weapon_info_panel are engine panels (userdata), so they are
+-- checked for presence, not for being Lua tables.
 local function build_switch_buttons(gui)
 	local parent = gui._panel
 	local buttons = gui._buttons
 	local weapon_info = gui._weapon_info_panel
 
-	if type(parent) ~= 'table' or type(buttons) ~= 'table' or type(weapon_info) ~= 'table' then
+	if not parent or not buttons or not weapon_info then
 		return
 	end
 
@@ -1286,7 +1300,9 @@ function breakpoints_panel.init(gui)
 	local breakpoints = core_breakpoints()
 	local weapon_info = gui._weapon_info_panel
 
-	if not breakpoints or type(weapon_info) ~= 'table' then
+	-- Engine panel, not a Lua table: a table check here returned before building
+	-- anything in game (v79 regression). Keep the breakpoints module check.
+	if not breakpoints or not weapon_info then
 		return
 	end
 

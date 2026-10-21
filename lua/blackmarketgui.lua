@@ -725,6 +725,14 @@ function BlackMarketGui:_show_stats()
 						and type(wbase.weapon_tweak_data) == 'function'
 						and wbase:weapon_tweak_data()
 
+					-- The chart follows exactly the data the `falloff` (Dmg.
+					-- modifier) stat row draws from: weapon_tweak.damage_falloff,
+					-- or the damage_near/damage_far pair the weapon model turns
+					-- into a falloff table. In 248.2 rifles (Lion's Roar `vhs`,
+					-- CAR-4 `new_m4`, ...) have neither in
+					-- lib/tweak_data/weapontweakdata.lua, so the chart is hidden
+					-- and the row is blank for them - that is the game's data,
+					-- not a missing feature (v76 behaved the same way).
 					if ballistics
 						and wbase
 						and type(wbase.is_weak_hit) == 'function'
