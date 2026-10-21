@@ -1,3 +1,11 @@
+Revision 78:
+- rebuilt the mod around plain tweak-data calculations: no more fake weapon units, fake player inventory, fake sound device, class swapping or weapon-class pre-hooks
+- removed the three lib/units/weapons pre-hooks; only lib/entry is pre-hooked now
+- removed the legacy auto-update metadata so the old v76 build can no longer overwrite this version
+- added lua/core (context, weapon, ballistics, timers, accuracy, ammo) and lua/ui (stats, breakpoints, melee, henchmen) modules, filled in over the next revisions
+- added a headless LuaJIT test runner under tests/
+Player notes: stats and skin previews no longer go through the old fake weapon engine, which was the thing that could crash the game around skin swapping.
+
 Revision 76:
 - fixed mod settings menu not getting loaded [courtesy of Nexqua]
 
