@@ -403,13 +403,7 @@ function BlackMarketGui:mws_consolidate_breakpoints(data, damage, amount_wanted)
 end
 
 function BlackMarketGui:mws_update_breakpoints()
-	local changed = Faker:use_game_classes()
-	pcall(function()
-		self:_mws_update_breakpoints()
-	end)
-	if changed then
-		Faker:use_normal_classes()
-	end
+	self:_mws_update_breakpoints()
 end
 
 function BlackMarketGui:_mws_update_breakpoints()

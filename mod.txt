@@ -21,18 +21,6 @@
 		{
 			"hook_id" : "lib/entry",
 			"script_path" : "lua/entry.lua"
-		},
-		{
-			"hook_id" : "lib/units/weapons/menuraycastweaponbase",
-			"script_path" : "lua/menuraycastweaponbase.lua"
-		},
-		{
-			"hook_id" : "lib/units/weapons/menusawweaponbase",
-			"script_path" : "lua/menusawweaponbase.lua"
-		},
-		{
-			"hook_id" : "lib/units/weapons/menushotgunbase",
-			"script_path" : "lua/menushotgunbase.lua"
 		}
 	],
 	"hooks" : [

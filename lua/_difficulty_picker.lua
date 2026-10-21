@@ -1,4 +1,5 @@
-_G.DifficultyPicker = _G.DifficultyPicker or class()
+-- Local difficulty widget; blackmarketgui.lua receives it via dofile, so no global is written.
+local DifficultyPicker = class()
 
 DifficultyPicker.risks = {
 	'risk_pd',
@@ -106,3 +107,5 @@ function DifficultyPicker:get_over_icon_difficulty_rank(x, y)
 	local icon_index = self:get_over_icon_index(x, y)
 	return icon_index and icon_index + 1
 end
+
+return DifficultyPicker
