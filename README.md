@@ -7,6 +7,47 @@ The mod keeps the original name, options, localization and player-facing layout.
 It adds the numbers the vanilla Black Market does not show, without spawning or
 faking any engine weapon unit.
 
+## Original mod description
+
+From the original [More Weapon Stats page](https://pd2mods.z77.fr/more_weapon_stats.html):
+
+> This mod is an extension to the weapon inventory more than inspired by
+> [Better Weapon Stats GUI](http://steamcommunity.com/groups/PD2-BWS-GUI)
+> (deprecated).
+
+### Player inventory
+
+To get an idea of the efficiency of a weapon accross difficulty levels, the
+usual stats panel can be swapped with breakpoints table:
+
+![Player inventory](docs/images/moreweaponstats_1.png)
+
+![Breakpoints table](docs/images/moreweaponstats_2.jpg)
+
+- You can use SPACE key to switch breakpoints display.
+- Headshot bonus is represented by bullseye's icon but it's not related to this
+  skill anyhow.
+- HVT bonus differs if you unlocked basic or ace.
+- For criticals, the first bullet is always accounted as such. Total amount of
+  crits depends on critical chance.
+- Berserker simulates damage done with health level that player gets after being
+  revived.
+
+### Crew inventory
+
+Weapons used by NPC teammates have different settings and falloff rules than
+players have.
+
+![Crew inventory](docs/images/moreweaponstats_3.jpg)
+
+DMG|HC stands for damage and average hit chance.
+
+Also, it's worth mentioning that when a NPC shooter is under suppressive fire
+effects:
+
+- his hit chance is halved;
+- his aim delay is increased by 50%.
+
 ## What it shows
 
 - Extended weapon rows: tactical/full reload, equip/unequip delay, ammo pickup,
@@ -162,3 +203,14 @@ KarateF22, code maintenance by Nexqua, and translations by Arknights (Chinese),
 NewPJzuza (Thai), andole and x(GOREMAGEDDON)x (Russian), Kilowide (Spanish).
 
 This repository is the 248.2 clean-Lua rewrite.
+
+## License
+
+No license was published on the original More Weapon Stats page or in the
+original v76 archive. The clean rewrite code in this repository is released under
+the **Unlicense** (public-domain dedication); see [LICENSE](LICENSE).
+
+The original mod name, localization files, screenshots, icons and any retained
+original content remain credited to their original authors. No ownership is
+claimed over those parts. If you are an original author and want different terms,
+open an issue.
