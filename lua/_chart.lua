@@ -1,4 +1,6 @@
-_G.SimpleChart = _G.SimpleChart or class()
+-- Local chart widget; blackmarketgui.lua receives it through the module loader
+-- (MoreWeaponStats:load_module), so no global is written.
+local SimpleChart = class()
 
 function SimpleChart:init(parent_panel, x, y, w, h, bar_start_y)
 	self.texts = {}
@@ -58,3 +60,5 @@ function SimpleChart:update(get_text_height_colour)
 		end
 	end
 end
+
+return SimpleChart

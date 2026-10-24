@@ -1,3 +1,39 @@
+Revision 80:
+- fixed the in-game regression that hid the whole breakpoint UI: `ui/breakpoints_panel.lua` guarded engine panels and bitmaps with `type(x) == 'table'`, but PAYDAY 2 panels/bitmaps are engine userdata, so `init` returned before building the "Show breakpoints" button, the table, the bonus icons or the difficulty picker
+- `init` and `build_switch_buttons` now check the engine panels for presence (`not parent`, `not weapon_info`); `bonus_bitmap_name` probes `bitmap:name()` on the object instead of requiring a Lua table; genuine Lua tables (bonus state, bitmap arrays, the picker) keep their table checks
+- `new_button` still returns nil safely when `BlackMarketGuiButtonItem` is not available
+- separated the breakpoint row list from the open/closed flag: `breakpoints_panel.clear()`/`refresh()` now write `gui.mws_bp_list`, and `gui.mws_breakpoints` stays the boolean owned by the show/hide callbacks, so an empty table can no longer read as "open" in the stance/breakpoint mouse branches
+- documented that the range chart uses the same data as the `falloff` (Dmg. modifier) row, and that a blank falloff row/chart for rifles that carry no `damage_falloff`/`damage_near`/`damage_far` in `lib/tweak_data/weapontweakdata.lua` (248.2: Lion's Roar `vhs`, CAR-4 `new_m4`) is the game's data, exactly like v76
+- added userdata (`newproxy`) engine-panel/bitmap fixtures to tests/breakpoints_panel_spec.lua: init builds the table, buttons and picker on engine objects, a userdata bonus bitmap is named/found/toggled, and clear() keeps `mws_breakpoints` boolean while dropping `mws_bp_list`
+Player notes: the "Show breakpoints" button, breakpoint table, bonus icons and difficulty picker are back. A blank falloff row or missing range chart on rifles such as the Lion's Roar is correct - those rifles have no falloff data in the game files, same as in v76.
+
+Revision 79:
+- fixed the in-game bootstrap crash `module must return a table: lua/ui/stats_panel.lua`: modules are now loaded through `blt.vm.loadfile` (fallback `loadfile`, then `io.open` + `loadstring`) and their returned tables are read from the chunk call itself, because SuperBLT's include loader does not propagate a chunk's return value (headless LuaJIT tests could not see that)
+- added `MoreWeaponStats:load_module(path)`: every load and every chunk run is pcall'd and returns `nil, error_string` instead of throwing
+- a module that fails now logs `[More Weapon Stats] failed to load <path>: <error>`, marks the namespace disabled and returns from the bootstrap; no assert, no crash, `compat.init()` only runs when every module loaded
+- the Black Market hook loads `lua/_chart.lua` through the same loader and installs nothing when the namespace is disabled or the chart module is missing, so the game stays vanilla instead of running a partial bootstrap
+- the two range charts are constructed under pcall; the stat rows still render if the chart widget fails
+- added tests/loader_spec.lua: loader order, missing path, throwing blt loader, throwing chunk, non-table return, and the inert Black Market hook
+Player notes: the Black Market opens again instead of throwing a fatal Lua error on the first page; if a mod file ever fails to load, the weapon stats stay off for that session instead of taking the game down.
+
+Revision 78:
+- rebuilt the mod around plain tweak-data calculations: no more fake weapon units, fake player inventory, fake sound device, class swapping or weapon-class pre-hooks
+- removed the three lib/units/weapons pre-hooks; only lib/entry is pre-hooked now
+- removed the legacy auto-update metadata so the old v76 build can no longer overwrite this version
+- added lua/core (context, weapon, ballistics, timers, accuracy, ammo) and lua/ui (stats, breakpoints, melee, henchmen) modules, filled in over the next revisions
+- added a headless LuaJIT test runner under tests/
+- the weapon stat model (damage, magazine/reserve ammo, fire rate, concealment, blueprint mods, skin bonuses) is now computed in pure Lua from tweak data instead of a fake weapon unit
+- henchman weapon previews read damage, magazine, alert size and suppression from the NPC/crew tweak entries, matching how the game spawns those weapons
+- context snapshots (difficulty, stances, skills/perks) are captured once per Black Market page and can no longer be mutated by a stat row
+- reload (full/partial/shell-by-shell), equip/unequip, spread, recoil, damage falloff and ammo pickup are now pure Lua over tweak data plus the player context, with no simulated player state machine
+- breakpoints are now pure Lua: enemy health and headshot multipliers come from the documented per-difficulty table instead of re-initialising `tweak_data.character`/`tweak_data.player`, so the table can show any difficulty without touching `Global.game_settings.difficulty`
+- Black Market extended stats now read the pure-Lua model (including skin bonuses) instead of fake weapon bases
+- the breakpoint table, its bonus toggles and the difficulty picker are now pure Lua, and previewing another difficulty no longer changes the difficulty the game is running
+- melee and henchman/NPC stats now come from tweak data through the ui/melee and ui/henchmen modules, with no fake unit behind the preview
+- extended stats show both ends of every range again (moving spread, ammo pickup min/max, equip/unequip, tactical vs single-shell reload), and coexistence with Super Duper Skin Swapper, Optional Skin Attachments, Hide Duplicate Skins, VanillaHUD Plus, The Fixes, Anticrash, Mod Hider and Extra Heist Info is verified without a compatibility shim
+- added MENU_OPTIONS.md: every menu option plus the display rows that are only editable in `mods\saves\more_weapon_stats.txt`, how to edit them, and what the breakpoint difficulty preview does
+Player notes: stats and skin previews no longer go through the old fake weapon engine, which was the thing that could crash the game around skin swapping.
+
 Revision 76:
 - fixed mod settings menu not getting loaded [courtesy of Nexqua]
 

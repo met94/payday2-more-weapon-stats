@@ -1,9 +1,29 @@
 local key = ModPath .. '	' .. RequiredScript
 if _G[key] then return else _G[key] = true end
 
-dofile(ModPath .. 'lua/_breakpoints.lua')
-dofile(ModPath .. 'lua/_chart.lua')
-dofile(ModPath .. 'lua/_difficulty_picker.lua')
+-- A failed bootstrap (or a namespace without the loader) must leave the Black
+-- Market vanilla: install no MWS wrappers at all rather than a partial set.
+if type(MoreWeaponStats) ~= 'table' or MoreWeaponStats.disabled then
+	log('[More Weapon Stats] bootstrap unavailable, Black Market hooks skipped')
+
+	return
+end
+
+if type(MoreWeaponStats.load_module) ~= 'function' then
+	log('[More Weapon Stats] module loader unavailable, Black Market hooks skipped')
+
+	return
+end
+
+-- The range chart is its own module: it is read through the loader so the
+-- chunk's table comes back, and a missing chart leaves the menu vanilla.
+local SimpleChart, chart_error = MoreWeaponStats:load_module(ModPath .. 'lua/_chart.lua')
+
+if type(SimpleChart) ~= 'table' then
+	log('[More Weapon Stats] failed to load lua/_chart.lua: ' .. tostring(chart_error))
+
+	return
+end
 
 DB:create_entry(
 	Idstring('texture'),
@@ -131,6 +151,50 @@ function BlackMarketGui:mws_is_buying()
 	end
 end
 
+function BlackMarketGui:mws_context()
+	-- One context per render; the stance lives on the gui, everything else comes
+	-- from core.context (a cached player snapshot).
+	local core = MoreWeaponStats and MoreWeaponStats.core
+	local context = core and core.context
+
+	if not context or type(context.get) ~= 'function' then
+		return {}
+	end
+
+	return context.get({
+		moving = not not self.mws_moving,
+		ducking = not not self.mws_ducking,
+		steelsight = not not self.mws_in_steelsight,
+		deployed = not not self.mws_deployed,
+	})
+end
+
+function BlackMarketGui:mws_set_bonus_availability()
+	local ui = MoreWeaponStats and MoreWeaponStats.ui
+	local breakpoints_panel = ui and ui.breakpoints_panel
+
+	if not breakpoints_panel then
+		return
+	end
+
+	breakpoints_panel.sync_bonuses(self, self:mws_context())
+end
+
+function BlackMarketGui:mws_update_breakpoints()
+	self:_mws_update_breakpoints()
+end
+
+function BlackMarketGui:_mws_update_breakpoints()
+	local ui = MoreWeaponStats and MoreWeaponStats.ui
+	local breakpoints_panel = ui and ui.breakpoints_panel
+
+	if not breakpoints_panel then
+		return
+	end
+
+	breakpoints_panel.refresh(self, self:mws_context())
+end
+
 local mws_original_blackmarketgui_updateinfotext = BlackMarketGui.update_info_text
 function BlackMarketGui:update_info_text()
 	mws_original_blackmarketgui_updateinfotext(self)
@@ -187,6 +251,16 @@ local mws_original_blackmarketgui_setup = BlackMarketGui._setup
 function BlackMarketGui:_setup(is_start_page, component_data)
 	_dlc_info_patched = false
 	_henchmen_weapon = false
+
+	-- New render: drop the cached player snapshot so difficulty, skills and
+	-- perks are re-read once for this page instead of once per stat row.
+	-- Guarded: a partially loaded core must never break the vanilla menu.
+	local core = MoreWeaponStats and MoreWeaponStats.core
+	local context = core and core.context
+
+	if context and type(context.invalidate) == 'function' then
+		context.invalidate()
+	end
 	if component_data then
 		if component_data.buying_weapon then
 			_henchmen_weapon = not not (not component_data[1].on_create_func_name and component_data[1].on_create_func)
@@ -213,13 +287,7 @@ function BlackMarketGui:_setup(is_start_page, component_data)
 	if self._mweapon_stats_panel and identifier == self.identifiers.melee_weapon then
 		base_panel = self._mweapon_stats_panel
 
-		self.mws_stats_shown = {
-			{ name = 'mws_attack_delay' },
-			{ name = 'mws_cooldown' },
-			{ name = 'mws_unequip_delay' },
-			{ name = 'mws_special' },
-			{ name = 'mws_dot_length' }
-		}
+		self.mws_stats_shown = MoreWeaponStats.ui.melee.rows(self)
 
 		text_columns = {
 			{ size = 100, name = 'name' },
@@ -270,52 +338,9 @@ function BlackMarketGui:_setup(is_start_page, component_data)
 		end
 
 		if _henchmen_weapon then
-			self.mws_stats_shown = {
-				{ name = 'mws_spread', fct = self.mws_spread_bot },
-				{ name = 'mws_rof', fct = self.mws_rof_bot },
-				{ name = 'mws_autorounds', fct = self.mws_autorounds_bot },
-				{ name = 'mws_reload_full', fct = self.mws_reload_bot },
-				{ name = 'mws_aim_delay', fct = self.mws_aim_delay_bot },
-			}
-
-			local dis = {}
-			for k, v in pairs(tweak_data.character.russian.weapon) do
-				if v.FALLOFF then
-					for _, f in ipairs(v.FALLOFF) do
-						if f.r then
-							dis[f.r] = f.r
-						end
-					end
-				end
-			end
-			dis = table.map_values(dis)
-			table.sort(dis, function(a, b) return a < b end)
-			for _, d in ipairs(dis) do
-				local clbk = function(...)
-					local params = {...}
-					table.insert(params, d)
-					self.mws_falloff_bot(unpack(params))
-				end
-				table.insert(self.mws_stats_shown, {
-					name = 'mws_damage_hitchance',
-					text_name = 'mws_damage_hitchance_' .. d,
-					fct = clbk,
-					macros = { DIS = d / 100 }
-				} )
-			end
-
+			self.mws_stats_shown = MoreWeaponStats.ui.henchmen.rows(self)
 		else
-			self.mws_stats_shown = {
-				{ name = 'mws_reload_partial', fct = self.mws_reload_partial },
-				{ name = 'mws_reload_full', fct = self.mws_reload_full },
-				{ name = 'mws_equip_delay', fct = self.mws_equip_delay },
-				{ name = 'mws_ammo_pickup', fct = self.mws_ammo_pickup },
-				{ name = 'mws_recoil_horiz', fct = self.mws_recoil_horiz },
-				{ name = 'mws_recoil_vert', fct = self.mws_recoil_vert },
-				{ name = 'mws_spread', fct = self.mws_spread_horiz },
-				{ name = 'mws_spread_vert', fct = self.mws_spread_vert }, -- for donald's horizontal leveller, or not
-				{ name = 'mws_falloff', fct = self.mws_falloff },
-			}
+			self.mws_stats_shown = MoreWeaponStats.ui.stats_panel.rows()
 		end
 
 		text_columns = {
@@ -336,47 +361,44 @@ function BlackMarketGui:_setup(is_start_page, component_data)
 		self.mws_stats_texts = {}
 		
 		for i, stat in ipairs(self.mws_stats_shown) do
-			if MoreWeaponStats.settings.display[stat.name:sub(5, -1)] == false then
-				goto continue
-			end
-
-			local panel = base_panel:panel({
-				layer = 1,
-				x = 0,
-				y = y_stat_line,
-				w = base_panel:w(),
-				h = 20
-			})
-			if math.mod(i, 2) == oddeven and not panel:child(tostring(i)) then
-				panel:rect({
-					color = Color.black:with_alpha(0.3)
-				})
-			end
-
-			y_stat_line = y_stat_line + 20
-			local x = 2
-			local text_name = stat.text_name or stat.name
-			self.mws_stats_texts[text_name] = {}
-			for i, column in ipairs(text_columns) do
-				local text_panel = panel:panel({
-					layer = 0,
-					x = x,
-					w = column.size,
-					h = panel:h()
-				})
-				self.mws_stats_texts[text_name][column.name] = text_panel:text({
-					text = i == 1 and managers.localization:to_upper_text(stat.name, stat.macros) or nil,
-					font_size = tweak_data.menu.pd2_small_font_size,
-					font = tweak_data.menu.pd2_small_font,
-					align = column.align,
+			if MoreWeaponStats.ui.stats_panel.visible(stat) then
+				local panel = base_panel:panel({
 					layer = 1,
-					alpha = column.alpha,
-					blend_mode = column.blend,
-					color = column.color or tweak_data.screen_colors.text
+					x = 0,
+					y = y_stat_line,
+					w = base_panel:w(),
+					h = 20
 				})
-				x = x + column.size
+				if math.mod(i, 2) == oddeven and not panel:child(tostring(i)) then
+					panel:rect({
+						color = Color.black:with_alpha(0.3)
+					})
+				end
+
+				y_stat_line = y_stat_line + 20
+				local x = 2
+				local text_name = stat.text_name or stat.name
+				self.mws_stats_texts[text_name] = {}
+				for j, column in ipairs(text_columns) do
+					local text_panel = panel:panel({
+						layer = 0,
+						x = x,
+						w = column.size,
+						h = panel:h()
+					})
+					self.mws_stats_texts[text_name][column.name] = text_panel:text({
+						text = j == 1 and managers.localization:to_upper_text(stat.name, stat.macros) or nil,
+						font_size = tweak_data.menu.pd2_small_font_size,
+						font = tweak_data.menu.pd2_small_font,
+						align = column.align,
+						layer = 1,
+						alpha = column.alpha,
+						blend_mode = column.blend,
+						color = column.color or tweak_data.screen_colors.text
+					})
+					x = x + column.size
+				end
 			end
-			::continue::
 		end
 	end
 
@@ -435,11 +457,31 @@ function BlackMarketGui:_setup(is_start_page, component_data)
 			top = top + 64
 		end
 
-		-- damage range modifier
-		self.mws_range_charts = {
-			SimpleChart:new(self.mws_stances_panel, 105, 0, 100, self.mws_stances_panel:h(), self.mws_stances_panel:h() / 2),
-			SimpleChart:new(self.mws_stances_panel, 210, 0, 100, self.mws_stances_panel:h(), self.mws_stances_panel:h() / 2),
-		}
+		-- damage range modifier. The two charts are a UI extra: if the chart
+		-- widget cannot construct, the stat rows above still render without them.
+		self.mws_range_charts = {}
+		if type(SimpleChart.new) == 'function' then
+			for _, chart_x in ipairs({ 105, 210 }) do
+				local ok, chart = pcall(
+					SimpleChart.new,
+					SimpleChart,
+					self.mws_stances_panel,
+					chart_x,
+					0,
+					100,
+					self.mws_stances_panel:h(),
+					self.mws_stances_panel:h() / 2
+				)
+
+				if ok and chart then
+					table.insert(self.mws_range_charts, chart)
+				else
+					log('[More Weapon Stats] range chart unavailable: ' .. tostring(chart))
+				end
+			end
+		else
+			log('[More Weapon Stats] range chart unavailable: no constructor')
+		end
 		self.mws_range_charts_floating_text = self.mws_range_charts_floating_text or self.mws_stances_panel:root():text({
 			layer = 100000000000,
 			visible = false,
@@ -463,166 +505,8 @@ function BlackMarketGui:_setup(is_start_page, component_data)
 			preview_btn._pc_btn = nil
 		end
 
-		-- show/hide breakpoints buttons
-		self.mws_bp_switch_panel = self._panel:panel({
-			w = self._buttons:w(),
-			h = 30,
-		})
-		self.mws_bp_switch_panel:set_bottom(self._weapon_info_panel:y() + 2)
-		self.mws_bp_switch_panel:set_right(self._panel:w())
-
-		local prio = self.si_extra_button_added and 2 or 1
-		local btn_data = {
-			prio = prio,
-			name = 'mws_bp_show',
-			pc_btn = 'menu_preview_item',
-			callback = callback(self, self, 'mws_bp_show_callback')
-		}
-		self.mws_bp_show_btn = BlackMarketGuiButtonItem:new(self.mws_bp_switch_panel, btn_data, 10)
-		self.mws_bp_show_btn._data.prio = 5 -- ugly trick for double-click
-		self._btns['mws_bp_show'] = self.mws_bp_show_btn
-
-		btn_data = {
-			prio = prio,
-			name = 'mws_bp_hide',
-			pc_btn = 'menu_preview_item',
-			callback = callback(self, self, 'mws_bp_hide_callback')
-		}
-		self.mws_bp_hide_btn = BlackMarketGuiButtonItem:new(self.mws_bp_switch_panel, btn_data, 10)
-		self.mws_bp_hide_btn._data.prio = 5
-		self._btns['mws_bp_hide'] = self.mws_bp_hide_btn
-
-		self:show_btns(self._selected_slot)
-
-		-- breakpoints
-		self.mws_bp_panel = self._weapon_info_panel:panel({
-			visible = false,
-			y = 58,
-			x = 10,
-			layer = 1,
-			w = self._weapon_info_panel:w() - 20,
-			h = self._weapon_info_panel:h() - 84
-		})
-
-		-- checkable bonuses
-		self.mws_bp_bonus_panel = self.mws_bp_panel:panel({
-			y = 0,
-			x = 0,
-			layer = 1,
-			w = 200,
-			h = 40
-		})
-
-		local max_x = 0
-		local bonus_dim = 32
-		self.mws_bp_skill_bitmaps = {}
-		for skill_name, bonus in pairs(self.mws_bonuses) do
-			local icon_xy = tweak_data.skilltree.skills[skill_name].icon_xy
-			max_x = math.max(max_x, bonus.x * bonus_dim)
-			self.mws_bp_skill_bitmaps[bonus.index] = self.mws_bp_bonus_panel:bitmap({
-				x = bonus.x * bonus_dim,
-				y = 0,
-				texture = 'guis/textures/pd2/skilltree_2/icons_atlas_2',
-				name = skill_name,
-				blend_mode = 'add',
-				layer = 1,
-				texture_rect = {
-					icon_xy[1] * 80,
-					icon_xy[2] * 80,
-					80,
-					80
-				},
-				w = bonus_dim,
-				h = bonus_dim,
-				alpha = not bonus.available and self.mws_alpha_unavailable or bonus.checked and self.mws_alpha_enabled or self.mws_alpha_disabled
-			})
-		end
-		self.mws_bp_bonus_panel:set_w(max_x + bonus_dim)
-		self.mws_bp_bonus_panel:set_center_x(self.mws_bp_panel:w() / 2)
-
-		-- unit names
-		local col_width = 38
-		self.mws_bp_unit_texts = {}
-		local h = self.mws_bp_panel:h() - 10
-		for i, unit_name in ipairs(self.mws_unit_types) do
-			local txt = self.mws_bp_panel:text({
-				vertical = 'center',
-				align = 'right',
-				text = managers.localization:text('mws_bp_option_' .. unit_name),
-				font_size = tweak_data.menu.pd2_small_font_size,
-				font = tweak_data.menu.pd2_small_font,
-				color = tweak_data.screen_colors.text:with_alpha(0.3 + i * 0.06),
-				x = i * col_width - 32,
-				y = h - 60,
-				w = 100,
-				h = 30
-			})
-			txt:rotate(-45)
-			self.mws_bp_unit_texts[i] = txt
-		end
-
-		-- cells
-		self.mws_bp_damage = {}
-		self.mws_bp_bullet = {}
-		local row_max = math.floor(self.mws_bp_unit_texts[1]:top() / 20) - 2
-		local nr = 0
-		for i = 2, row_max do
-			local y = i * 20
-			local panel = self.mws_bp_panel:panel({
-				layer = 1,
-				x = 0,
-				y = y,
-				w = self.mws_bp_panel:w(),
-				h = 20
-			})
-			if i % 2 == 0 then
-				panel:rect({
-					color = Color.black:with_alpha(0.3)
-				})
-			end
-
-			self.mws_bp_damage[i - 1] = self.mws_bp_panel:text({
-				name = 'mws_bp_damage_' .. tostring(i - 1),
-				layer = 2,
-				align = 'right',
-				vertical = 'center',
-				font_size = tweak_data.menu.pd2_small_font_size,
-				font = tweak_data.menu.pd2_small_font,
-				text = '?',
-				x = 0,
-				y = y,
-				w = 60,
-				h = 20,
-				color = Color.white,
-			})
-
-			for j = 1, 6 do
-				nr = nr + 1
-				self.mws_bp_bullet[nr] = self.mws_bp_panel:text({
-					name = 'mws_bp_bullet_' .. tostring(i - 1) .. '_' .. self.mws_unit_types[j],
-					layer = 2,
-					align = 'center',
-					vertical = 'center',
-					font_size = tweak_data.menu.pd2_small_font_size,
-					font = tweak_data.menu.pd2_small_font,
-					text = '-',
-					x = 80 + (j - 1) * col_width,
-					y = y,
-					w = 25,
-					h = 20,
-					color = Color.white,
-					alpha = 1
-				})
-			end
-		end
-
-		-- difficulty
-		self.mws_difficulty_picker = DifficultyPicker:new(self.mws_bp_panel)
-		self.mws_difficulty_picker:update_difficulty()
-
-		if self.mws_breakpoints then
-			self:mws_update_breakpoints()
-		end
+		-- breakpoint table, bonus toggles and difficulty picker
+		MoreWeaponStats.ui.breakpoints_panel.init(self)
 	end
 
 	if self.mws_stats_shown then
@@ -673,103 +557,196 @@ function BlackMarketGui:mws_bp_hide_callback(data)
 	end
 end
 
-local mws_original_blackmarketgui_showstats = BlackMarketGui.show_stats
-function BlackMarketGui:show_stats()
-	pcall(function()
-		self:_show_stats()
-	end)
-	Faker:use_normal_classes()
+-- Mouse interaction for the breakpoint panel: the difficulty picker and the
+-- bonus toggles delegate to ui/breakpoints_panel. The stance and range-chart
+-- branches are the v76 ones, unchanged.
+local mws_original_blackmarketgui_mousepressed = BlackMarketGui.mouse_pressed
+function BlackMarketGui:mouse_pressed(button, x, y)
+	if self._enabled and not self._renaming_item and button == Idstring('0') then
+		local ui = MoreWeaponStats and MoreWeaponStats.ui
+		local breakpoints_panel = ui and ui.breakpoints_panel
+
+		if self.mws_breakpoints then
+			if breakpoints_panel and self.mws_bp_panel and self.mws_bp_panel:inside(x, y) then
+				local difficulty_rank = breakpoints_panel.difficulty_at(self, x, y)
+
+				if difficulty_rank then
+					breakpoints_panel.set_difficulty(self, breakpoints_panel.difficulty_name(difficulty_rank), true)
+					self:mws_update_breakpoints()
+				end
+
+				local bonus = breakpoints_panel.bonus_at(self, x, y)
+
+				if bonus then
+					breakpoints_panel.click_bonus(self, bonus)
+					self:mws_update_breakpoints()
+				end
+			end
+
+		elseif self.mws_stances_panel then
+			if self.mws_stances_panel:inside(x, y) then
+				if self.mws_stances_bitmaps[1]:inside(x, y) then
+					self.mws_in_steelsight = not self.mws_in_steelsight
+					self.mws_stances_bitmaps[1]:set_visible(not self.mws_in_steelsight)
+					self.mws_stances_bitmaps[2]:set_visible(self.mws_in_steelsight)
+					self:show_stats()
+				elseif self.mws_stances_bitmaps[3]:inside(x, y) then
+					self.mws_ducking = not self.mws_ducking
+					self.mws_stances_bitmaps[3]:set_visible(not self.mws_ducking)
+					self.mws_stances_bitmaps[4]:set_visible(self.mws_ducking)
+					self:show_stats()
+				end
+			end
+		end
+	end
+
+	return mws_original_blackmarketgui_mousepressed(self, button, x, y)
 end
 
-function BlackMarketGui:_show_stats()
-	if _henchmen_weapon and self:mws_is_buying() then
-		self._slot_data.comparision_data = nil
+local mws_original_blackmarketgui_mousemoved = BlackMarketGui.mouse_moved
+function BlackMarketGui:mouse_moved(o, x, y)
+	if self._enabled and not self._renaming_item then
+		local ui = MoreWeaponStats and MoreWeaponStats.ui
+		local breakpoints_panel = ui and ui.breakpoints_panel
+
+		if self.mws_breakpoints then
+			if breakpoints_panel and self.mws_bp_panel and self.mws_bp_panel:inside(x, y) then
+				if breakpoints_panel.difficulty_at(self, x, y) then
+					return true, 'link'
+				end
+
+				if breakpoints_panel.bonus_at(self, x, y) then
+					return true, 'link'
+				end
+			end
+
+		elseif self.mws_stances_panel then
+			if self.mws_range_charts then
+				self.mws_range_charts_floating_text:hide()
+				for _, chart in ipairs(self.mws_range_charts) do
+					local txt = chart:visible() and chart:get_text_at(x, y)
+					if txt then
+						self.mws_range_charts_floating_text:show()
+						self.mws_range_charts_floating_text:set_text(txt)
+						self.mws_range_charts_floating_text:set_world_right(x)
+						self.mws_range_charts_floating_text:set_world_top(y + 15)
+						return true
+					end
+				end
+			end
+
+			if self.mws_stances_panel:inside(x, y) then
+				if self.mws_stances_bitmaps[1]:inside(x, y) or self.mws_stances_bitmaps[3]:inside(x, y) then
+					return true, 'link'
+				end
+			end
+		end
 	end
+
+	return mws_original_blackmarketgui_mousemoved(self, o, x, y)
+end
+
+local function mws_pcall(what, fct)
+	local ok, err = pcall(fct)
+	if not ok then
+		log(('[More Weapon Stats] %s: %s'):format(what, tostring(err)))
+	end
+end
+
+local mws_original_blackmarketgui_showstats = BlackMarketGui.show_stats
+function BlackMarketGui:show_stats()
+	mws_pcall('show_stats pre-clear', function()
+		if _henchmen_weapon and self:mws_is_buying() then
+			self._slot_data.comparision_data = nil
+		end
+	end)
 
 	mws_original_blackmarketgui_showstats(self)
 
-	Faker:use_game_classes()
+	mws_pcall('show_stats', function()
+		self:_show_stats()
+	end)
+end
 
+function BlackMarketGui:_show_stats()
 	local slot_data = self._slot_data
 
+	-- One player snapshot per render: difficulty, skills and stances are read
+	-- once and shared by the stat rows, the range chart and the comparison
+	-- column instead of being re-read per row.
+	local core = MoreWeaponStats and MoreWeaponStats.core
+	local context_module = core and core.context
+
+	if context_module and type(context_module.invalidate) == 'function' then
+		context_module.invalidate()
+	end
+
+	local context = self:mws_context()
+
 	-- breakpoints
-	MoreWeaponStats.mws_slot_data = slot_data
 	if self.mws_breakpoints then
 		self._stats_panel:hide()
-		self:mws_update_breakpoints()
+
+		local breakpoints_panel = MoreWeaponStats.ui.breakpoints_panel
+
+		if breakpoints_panel then
+			breakpoints_panel.refresh(self, context)
+		end
 	end
 
 	-- melee
-	if self._mweapon_stats_panel and self._mweapon_stats_panel:visible() then
-		if self.mws_stats_texts then
-			local melee1 = managers.blackmarket:get_melee_weapon_data(self:mws_get_wbase_from_slot(true)._name_id)
-			local melee2 = not slot_data.equipped and managers.blackmarket:get_melee_weapon_data(self:mws_get_wbase_from_slot(false)._name_id)
-			for _, stat in ipairs(self.mws_stats_shown) do
-				local txt1, txt2
-				if stat.name == 'mws_attack_delay' then
-					txt1 = ('%.2fs'):format(melee1.melee_damage_delay or 0)
-					txt2 = melee2 and ('%.2fs'):format(melee2.melee_damage_delay or 0)
-				elseif stat.name == 'mws_cooldown' then
-					txt1 = ('%.2fs'):format(melee1.repeat_expire_t)
-					txt2 = melee2 and ('%.2fs'):format(melee2.repeat_expire_t)
-				elseif stat.name == 'mws_unequip_delay' then
-					txt1 = ('%.2fs'):format(melee1.expire_t)
-					txt2 = melee2 and ('%.2fs'):format(melee2.expire_t)
-				elseif stat.name == 'mws_special' then
-					local function mdescr(melee)
-						return melee and (
-							melee.special_weapon
-							or melee.tase_data and 'tase'
-							or melee.fire_dot_data and 'fire'
-							or melee.dot_data and (melee.dot_data.type or 'dot')
-						)
-					end
-					txt1 = mdescr(melee1)
-					txt2 = mdescr(melee2)
-				elseif stat.name == 'mws_dot_length' then
-					local function mdescr(melee)
-						return melee and (
-							melee.dot_data and melee.dot_data.custom_data and ('%.2fs'):format(melee.dot_data.custom_data.dot_length or 0)
-							or melee.tase_data and melee.tase_data.tase_strength
-							or melee.fire_dot_data and ('%.2fs'):format(melee.fire_dot_data.dot_length or 0)
-						)
-					end
-					txt1 = mdescr(melee1)
-					txt2 = mdescr(melee2)
-				end
-				self.mws_stats_texts[stat.name].a1:set_text(txt1 or '')
-				self.mws_stats_texts[stat.name].a2:set_text(txt2 or '')
-			end
-		end
+	if self._mweapon_stats_panel and self._mweapon_stats_panel:visible() and self.mws_stats_texts then
+		local equipped_model = self:mws_get_wbase_from_slot(true)
+		local selected_model = not slot_data.equipped and self:mws_get_wbase_from_slot(false)
+
+		MoreWeaponStats.ui.melee.refresh(self, selected_model, equipped_model, context)
 	end
 
 	-- weapons
 	if not _henchmen_weapon and self._rweapon_stats_panel and self._rweapon_stats_panel:visible() then
 		self:mws_realign_rcells(self._rweapon_stats_panel)
 		if self.mws_stats_texts then
-			local wbase_selected = self:mws_get_wbase_from_slot(true)
-			local wbase_equipped = not slot_data.equipped and self:mws_get_wbase_from_slot(false)
+			-- Left cells are the equipped weapon, right cells the selected slot,
+			-- the same columns the vanilla table shows.
+			local equipped_model = self:mws_get_wbase_from_slot(true)
+			local selected_model = not slot_data.equipped and self:mws_get_wbase_from_slot(false)
 
-			for _, stat in ipairs(self.mws_stats_shown) do
-				if stat.fct and self.mws_stats_texts[stat.name] then
-					stat.fct(self, wbase_selected, '1', self.mws_stats_texts[stat.name])
-					if wbase_equipped then
-						stat.fct(self, wbase_equipped, '2', self.mws_stats_texts[stat.name])
-					else
-						self.mws_stats_texts[stat.name].a2:set_text('')
-						self.mws_stats_texts[stat.name].b2:set_text('')
-					end
-				end
-			end
+			MoreWeaponStats.ui.stats_panel.refresh(self, selected_model, equipped_model, context)
 
 			if self.mws_range_charts then
+				local ballistics = core and core.ballistics
+
 				local function update_bars(wbase, chart)
-					if wbase and wbase.is_weak_hit and wbase._optimal_distance + wbase._optimal_range ~= 0 and wbase:weapon_tweak_data().damage_falloff then
-						local fake_player_unit = wbase and Faker.make_player_unit(wbase, false, self.mws_ducking, false, self.mws_in_steelsight)
+					if not chart then
+						return
+					end
+
+					local weapon_tweak = wbase
+						and type(wbase.weapon_tweak_data) == 'function'
+						and wbase:weapon_tweak_data()
+
+					-- The chart follows exactly the data the `falloff` (Dmg.
+					-- modifier) stat row draws from: weapon_tweak.damage_falloff,
+					-- or the damage_near/damage_far pair the weapon model turns
+					-- into a falloff table. In 248.2 rifles (Lion's Roar `vhs`,
+					-- CAR-4 `new_m4`, ...) have neither in
+					-- lib/tweak_data/weapontweakdata.lua, so the chart is hidden
+					-- and the row is blank for them - that is the game's data,
+					-- not a missing feature (v76 behaved the same way).
+					if ballistics
+						and wbase
+						and type(wbase.is_weak_hit) == 'function'
+						and weapon_tweak
+						and weapon_tweak.damage_falloff
+						and (wbase._optimal_distance or 0) + (wbase._optimal_range or 0) ~= 0
+					then
 						local col_ray = { distance = 0 }
 						local function get_text_height_colour(i)
 							col_ray.distance = (i - 1) * 50
-							local value = wbase:get_damage_falloff(1, col_ray, fake_player_unit)
+							local value = ballistics.get_damage_falloff(wbase, col_ray.distance, context)
+							if not value then
+								return nil, 0
+							end
 							local dmg = value * wbase._damage * 10
 							local txt = managers.localization:text('mws_range_chart_text', {
 								DMG = ('%.1f'):format(dmg),
@@ -787,8 +764,8 @@ function BlackMarketGui:_show_stats()
 						chart:hide()
 					end
 				end
-				update_bars(wbase_selected, self.mws_range_charts[1])
-				update_bars(wbase_equipped, self.mws_range_charts[2])
+				update_bars(equipped_model, self.mws_range_charts[1])
+				update_bars(selected_model, self.mws_range_charts[2])
 			end
 		end
 	end
@@ -827,10 +804,10 @@ function BlackMarketGui:_show_stats()
 			local value_equipped, value_selected = '', ''
 			if stat.name == 'magazine' then
 				if wbase_equipped then
-					value_equipped = wbase_equipped:ammo_base():get_ammo_max_per_clip()
+					value_equipped = wbase_equipped:get_ammo_max_per_clip()
 				end
 				if wbase_selected then
-					value_selected = wbase_selected:ammo_base():get_ammo_max_per_clip()
+					value_selected = wbase_selected:get_ammo_max_per_clip()
 				end
 			elseif stat.name == 'fire_rate' then
 				if wbase_equipped then
@@ -862,20 +839,7 @@ function BlackMarketGui:_show_stats()
 		end
 
 		if self.mws_stats_texts then
-			for _, stat in ipairs(self.mws_stats_shown) do
-				if stat.fct then
-					local text_name = stat.text_name or stat.name
-					if wbase_equipped then
-						stat.fct(self, wbase_equipped, '1', self.mws_stats_texts[text_name])
-					end
-					if wbase_selected then
-						stat.fct(self, wbase_selected, '2', self.mws_stats_texts[text_name])
-					else
-						self.mws_stats_texts[text_name].a2:set_text('')
-						self.mws_stats_texts[text_name].b2:set_text('')
-					end
-				end
-			end
+			MoreWeaponStats.ui.henchmen.refresh(self, wbase_selected, wbase_equipped, context)
 		end
 	end
 end
@@ -892,18 +856,28 @@ end
 
 function BlackMarketGui:mws_get_wbase_from_slot(equipped, remove_mod, add_mod, slot_data, npc)
 	slot_data = slot_data or self._slot_data
-	if slot_data.name == 'sentry_gun' then
+	if not slot_data or slot_data.name == 'sentry_gun' then
 		return
 	end
 
 	local category = slot_data.category
 	if tweak_data.weapon[slot_data.name] then
 		local slot = equipped and managers.blackmarket:equipped_weapon_slot(category) or slot_data.slot
-		local weapon = equipped and managers.blackmarket:equipped_item(category) or managers.blackmarket:get_crafted_category_slot(category, slot)
-		local weapon_id = equipped and weapon.weapon_id or weapon and weapon.weapon_id or slot_data.name
+
+		-- One crafted-table read for the slot: it carries both the weapon id and
+		-- the skin (`cosmetics`) the stat model needs.
+		local crafted = equipped and managers.blackmarket:equipped_item(category) or managers.blackmarket:get_crafted_category_slot(category, slot)
+		local weapon_id = crafted and crafted.weapon_id or slot_data.name
+		local cosmetics = crafted and crafted.cosmetics or nil
 		local factory_id = managers.weapon_factory:get_factory_id_by_weapon_id(weapon_id)
 
-		local blueprint = deep_clone(managers.blackmarket:get_weapon_blueprint(category, slot) or managers.weapon_factory:get_default_blueprint_by_factory_id(factory_id))
+		local blueprint = managers.blackmarket:get_weapon_blueprint(category, slot)
+
+		if not blueprint and factory_id then
+			blueprint = managers.weapon_factory:get_default_blueprint_by_factory_id(factory_id)
+		end
+
+		blueprint = deep_clone(blueprint)
 		if blueprint then
 			if remove_mod then
 				for i = 1, #blueprint do
@@ -918,7 +892,12 @@ function BlackMarketGui:mws_get_wbase_from_slot(equipped, remove_mod, add_mod, s
 			end
 		end
 
-		return Faker:make_weapon_base(factory_id, blueprint, weapon_id, npc)
+		return MoreWeaponStats.core.weapon.new_from_slot(weapon_id, blueprint, {
+			npc = npc,
+			category = category,
+			slot = slot,
+			cosmetics = cosmetics,
+		})
 
 	elseif tweak_data.blackmarket.melee_weapons[slot_data.name] then
 		local weapon_id = equipped and managers.blackmarket:equipped_item(category) or slot_data.name
@@ -926,275 +905,4 @@ function BlackMarketGui:mws_get_wbase_from_slot(equipped, remove_mod, add_mod, s
 			_name_id = weapon_id,
 		}
 	end
-end
-
-function BlackMarketGui:mws_reload_x_ammo(wbase, x)
-	-- PlayerStandard:_start_action_reload()
-	wbase:set_ammo_remaining_in_clip(x and (wbase:get_ammo_max_per_clip() - x) or 0)
-
-	local fake_player_unit = Faker.make_player_unit(wbase)
-	local fake_player_state = fake_player_unit._movement._current_state
-	fake_player_state:_start_action_reload_enter(0)
-
-	local i, v, next_v = 0, 0, table.sum(fake_player_state._state_data)
-	while next_v > v do
-		v = next_v
-		fake_player_state:_update_reload_timers(v, 0, {})
-		next_v = table.sum(fake_player_state._state_data)
-
-		i = i + 1
-		if i > 100 then
-			v = -1
-			break
-		end
-	end
-
-	return v
-end
-
-function BlackMarketGui:mws_reload_full(wbase, index, txts)
-	-- PlayerStandard:_start_action_reload()
-	local v = self:mws_reload_x_ammo(wbase)
-	txts['a' .. index]:set_text(('%.2f%s'):format(v, managers.localization:text('menu_seconds_suffix_short')))
-end
-
-function BlackMarketGui:mws_reload_partial(wbase, index, txts)
-	-- PlayerStandard:_start_action_reload()
-	if wbase:get_ammo_max_per_clip() == 1 then
-		txts['a' .. index]:set_text('')
-		txts['b' .. index]:set_text('')
-		return
-	end
-
-	local v1 = self:mws_reload_x_ammo(wbase, 1)
-
-	local speed_multiplier = wbase:reload_speed_multiplier()
-	local v2 = (wbase:weapon_tweak_data().timers.reload_not_empty or wbase:reload_shell_expire_t() or 2.2) / speed_multiplier
-
-	if v1 == 0 then -- see saw
-		v1 = v2
-	end
-
-	local s = managers.localization:text('menu_seconds_suffix_short')
-	txts['a' .. index]:set_text(('%.2f%s'):format(v1, s))
-	txts['b' .. index]:set_text((v1 == v2 and '' or ' | %.2f%s'):format(v2, s))
-end
-
-function BlackMarketGui.mws_get_weapon_usage_tweak(wbase)
-	local wtd = wbase:weapon_tweak_data()
-	return wtd and tweak_data.character.russian.weapon[wtd.usage], wtd
-end
-
-function BlackMarketGui:mws_reload_bot(wbase, index, txts)
-	local weapon_usage_tweak = self.mws_get_weapon_usage_tweak(wbase)
-	if not weapon_usage_tweak then
-		txts['a' .. index]:set_text('?')
-		txts['b' .. index]:set_text('')
-		return
-	end
-
-	txts['a' .. index]:set_text(('%.2f'):format(weapon_usage_tweak.RELOAD_SPEED))
-end
-
-function BlackMarketGui:mws_aim_delay_bot(wbase, index, txts)
-	local weapon_usage_tweak = self.mws_get_weapon_usage_tweak(wbase)
-	if not weapon_usage_tweak then
-		txts['a' .. index]:set_text('?')
-		txts['b' .. index]:set_text('')
-		return
-	end
-
-	local s = managers.localization:text('menu_seconds_suffix_short')
-	txts['a' .. index]:set_text(('%.2f%s'):format(weapon_usage_tweak.aim_delay[1], s))
-	txts['b' .. index]:set_text((' | %.2f%s'):format(weapon_usage_tweak.aim_delay[2], s))
-end
-
-local pickup_range_l, pickup_range_h
-
-local mws_original_math_lerp = math.lerp
-function math.mws_lerp(a, b, t)
-	pickup_range_l = a
-	pickup_range_h = b
-	return mws_original_math_lerp(a, b, t)
-end
-
-function BlackMarketGui:mws_ammo_pickup(wbase, index, txts)
-	pickup_range_l = -1
-	pickup_range_h = -1
-
-	wbase:set_ammo_total(0)
-	math.lerp = math.mws_lerp
-	wbase:add_ammo(1)
-	math.lerp = mws_original_math_lerp
-
-	if pickup_range_l <= 0 and pickup_range_h <= 0 then
-		txts['a' .. index]:set_text('')
-		txts['b' .. index]:set_text('')
-	else
-		txts['a' .. index]:set_text(('%.2f'):format(pickup_range_l))
-		txts['b' .. index]:set_text((' | %.2f'):format(pickup_range_h))
-	end
-end
-
-function BlackMarketGui:mws_falloff(wbase, index, txts)
-	if wbase.is_weak_hit and wbase._optimal_distance + wbase._optimal_range ~= 0 and wbase:weapon_tweak_data().damage_falloff then
-		txts['a' .. index]:set_text(('%.1f'):format(wbase._near_multiplier))
-		txts['b' .. index]:set_text((' | %.1f'):format(wbase._far_multiplier))
-	elseif wbase._damage_near then
-		local inc_range_mul = self.mws_in_steelsight and managers.player:upgrade_value('shotgun', 'steelsight_range_inc', 1) or 1
-		local near = inc_range_mul * wbase._damage_near / 100
-		local far = inc_range_mul * wbase._damage_far / 100
-		txts['a' .. index]:set_text(('%.1fm'):format(near))
-		txts['b' .. index]:set_text((' | %.1fm'):format(near + far))
-	else
-		txts['a' .. index]:set_text('')
-		txts['b' .. index]:set_text('')
-	end
-end
-
-function BlackMarketGui.mws_CopActionShoot_get_shoot_falloff(target_dis, falloff)
-	for i_range, range_data in ipairs(falloff) do
-		if target_dis < range_data.r then
-			return range_data, i_range
-		end
-	end
-	return falloff[#falloff], #falloff
-end
-
-function BlackMarketGui:mws_falloff_bot(wbase, index, txts, dis)
-	local weapon_usage_tweak = self.mws_get_weapon_usage_tweak(wbase)
-	if not weapon_usage_tweak then
-		txts['a' .. index]:set_text('?')
-		txts['b' .. index]:set_text('')
-		return
-	end
-
-	local falloff, i_range = self.mws_CopActionShoot_get_shoot_falloff(dis - 0.01, weapon_usage_tweak.FALLOFF)
-
-	txts['a' .. index]:set_text(('%.2f'):format(falloff.dmg_mul * wbase._damage * 10))
-	txts['b' .. index]:set_text((' | %i%%'):format(100 * falloff.acc[2]))
-end
-
-local function mws_get_spread(wbase, st_moving, st_ducking, st_deploy, st_steelsight)
-	local fake_player_unit = Faker.make_player_unit(wbase, st_moving, st_ducking, st_deploy, st_steelsight)
-	return wbase:_get_spread(fake_player_unit)
-end
-
-function BlackMarketGui:mws_spread_horiz(wbase, index, txts)
-	if wbase:is_category('saw') then
-		txts['a' .. index]:set_text('')
-		txts['b' .. index]:set_text('')
-	else
-		local spread_x, spread_y = mws_get_spread(wbase, false, self.mws_ducking, false, self.mws_in_steelsight)
-		txts['a' .. index]:set_text(("%.2f'"):format(spread_x))
-		local spread_x, spread_y = mws_get_spread(wbase, true, self.mws_ducking, false, self.mws_in_steelsight)
-		txts['b' .. index]:set_text((" | %.2f'"):format(spread_x))
-	end
-end
-
-function BlackMarketGui:mws_spread_vert(wbase, index, txts)
-	if wbase:is_category('saw') then
-		txts['a' .. index]:set_text('')
-		txts['b' .. index]:set_text('')
-	else
-		local spread_x, spread_y = mws_get_spread(wbase, false, self.mws_ducking, false, self.mws_in_steelsight)
-		txts['a' .. index]:set_text(("%.2f'"):format(spread_y))
-		local spread_x, spread_y = mws_get_spread(wbase, true, self.mws_ducking, false, self.mws_in_steelsight)
-		txts['b' .. index]:set_text((" | %.2f'"):format(spread_y))
-	end
-end
-
-function BlackMarketGui:mws_spread_bot(wbase, index, txts)
-	if wbase:is_category('saw') then
-		txts['a' .. index]:set_text('')
-		txts['b' .. index]:set_text('')
-	else
-		local weapon_usage_tweak = self.mws_get_weapon_usage_tweak(wbase)
-		if not weapon_usage_tweak then
-			txts['a' .. index]:set_text('?')
-			txts['b' .. index]:set_text('')
-		else
-			txts['a' .. index]:set_text(('%.0f'):format(weapon_usage_tweak.spread))
-			txts['b' .. index]:set_text('')
-		end
-	end
-end
-
-function BlackMarketGui:mws_autorounds_bot(wbase, index, txts)
-	local weapon_usage_tweak, weap_tweak = self.mws_get_weapon_usage_tweak(wbase)
-	if not weapon_usage_tweak then
-		txts['a' .. index]:set_text('?')
-		txts['b' .. index]:set_text('')
-		return
-	end
-
-	local automatic_weap = weap_tweak.auto and weapon_usage_tweak.autofire_rounds and true
-	if automatic_weap then
-		txts['a' .. index]:set_text(('%i'):format(weapon_usage_tweak.autofire_rounds[1]))
-		txts['b' .. index]:set_text((' | %i'):format(weapon_usage_tweak.autofire_rounds[2]))
-	else
-		txts['a' .. index]:set_text('-')
-		txts['b' .. index]:set_text('')
-	end
-end
-
-function BlackMarketGui:mws_rof_bot(wbase, index, txts)
-	local weapon_usage_tweak, weap_tweak = self.mws_get_weapon_usage_tweak(wbase)
-	if not weapon_usage_tweak then
-		txts['a' .. index]:set_text('?')
-		txts['b' .. index]:set_text('')
-		return
-	end
-
-	local rof = -1
-	local automatic_weap = weap_tweak.auto and weapon_usage_tweak.autofire_rounds and true
-	if automatic_weap then
-		-- see NewNPCRaycastWeaponBase:trigger_held()
-		local fire_rate = weap_tweak.auto and weap_tweak.auto.fire_rate or 0.1
-		rof = 60 / fire_rate
-	else
-		-- see end of CopActionShoot:update()
-		local falloff, i_range = self.mws_CopActionShoot_get_shoot_falloff(1500, weapon_usage_tweak.FALLOFF)
-		rof = 60 / falloff.recoil[2]
-	end
-	txts['a' .. index]:set_text(('%.0f'):format(rof))
-	txts['b' .. index]:set_text('')
-end
-
-local function mws_get_recoil(wbase, st_ducking, st_steelsight)
-	-- comes from function PlayerStandard:_check_action_primary_attack()
-	local recoil_multiplier = (wbase:recoil() + wbase:recoil_addend()) * wbase:recoil_multiplier()
-	local up, down, left, right = unpack(wbase:weapon_tweak_data().kick[st_steelsight and 'steelsight' or st_ducking and 'crouching' or 'standing'])
-	return {
-		up = up * recoil_multiplier,
-		down = down * recoil_multiplier,
-		left = left * recoil_multiplier,
-		right = right * recoil_multiplier
-	}
-end
-
-function BlackMarketGui:mws_recoil_horiz(wbase, index, txts)
-	local recoil = mws_get_recoil(wbase, self.mws_ducking, self.mws_in_steelsight)
-	txts['a' .. index]:set_text(("%.2f'"):format(recoil.left))
-	txts['b' .. index]:set_text((" | %.2f'"):format(recoil.right))
-end
-
-function BlackMarketGui:mws_recoil_vert(wbase, index, txts)
-	local recoil = mws_get_recoil(wbase, self.mws_ducking, self.mws_in_steelsight)
-	txts['a' .. index]:set_text(("%.2f'"):format(recoil.up))
-	txts['b' .. index]:set_text((" | %.2f'"):format(recoil.down))
-end
-
-function BlackMarketGui:mws_equip_delay(wbase, index, txts)
-	local fake_player_unit = Faker.make_player_unit(wbase)
-	local fake_player_state = fake_player_unit._movement._current_state
-
-	fake_player_state:_start_action_equip_weapon(0)
-	local equip = fake_player_state._equip_weapon_expire_t or 0
-
-	fake_player_state:_start_action_unequip_weapon(0, {})
-	local unequip = fake_player_state._unequip_weapon_expire_t or 0
-
-	txts['a' .. index]:set_text(('%.2fs'):format(equip))
-	txts['b' .. index]:set_text((' | %.2fs'):format(unequip))
 end
