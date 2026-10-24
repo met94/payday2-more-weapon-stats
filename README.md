@@ -36,7 +36,8 @@ This rewrite removes that engine entirely:
 - no `NewRaycastWeaponBase` / `ShotgunBase` / other weapon-class hooks;
 - no fake `PlayerInventory` registration, manager stubs or class snapshots;
 - no `xpcall` assumptions (PAYDAY 2 Lua has no `xpcall`);
-- no auto-update metadata, so the old v76 build cannot overwrite this one.
+- auto-updates come from this repository's GitHub releases, not the old v76
+  update endpoint.
 
 Stats are computed by a pure-Lua `WeaponModel` from:
 
@@ -48,15 +49,15 @@ Stats are computed by a pure-Lua `WeaponModel` from:
 
 The Black Market UI reads that model instead of a fake weapon base.
 
-Additional fixes since the rewrite:
+Fixes found during the rewrite testing:
 
-- **v79** — module loading uses an explicit chunk loader
+- module loading uses an explicit chunk loader
   (`blt.vm.loadfile` → `loadfile` → `io.open`/`loadstring`). SuperBLT's
   `dofile` does not return a chunk's value; the old bootstrap treated that as a
-  fatal module error.
-- **v80** — the breakpoint table/bonus icons/difficulty picker build correctly
-  on engine userdata panels, and the open/closed flag is kept separate from the
-  breakpoint row list.
+  fatal module error;
+- the breakpoint table/bonus icons/difficulty picker build correctly on engine
+  userdata panels, and the open/closed flag is kept separate from the breakpoint
+  row list.
 
 ## Requirements
 
@@ -71,12 +72,18 @@ Additional fixes since the rewrite:
    - `More Weapon Stats`
    - `More Weapon Stats-fix-crash`
    - `More Weapon Stats-mws-rewrite`
-3. Extract the release/download so the result is exactly:
+3. Download `MoreWeaponStats_v1.zip` from
+   [Releases](https://github.com/met94/payday2-more-weapon-stats/releases/latest)
+   and extract it so the result is exactly:
    `...\PAYDAY 2\mods\More Weapon Stats\mod.txt`
 4. Launch the game and open the Black Market.
 
-If you download the GitHub source ZIP, rename the extracted
+If you download the GitHub source ZIP instead, rename the extracted
 `payday2-more-weapon-stats-main` folder to `More Weapon Stats`.
+
+SuperBLT's update check (Simple Mod Updater) reads
+`releases/latest/download/meta.json` from this repository, so later releases
+can be installed through the normal mod updater.
 
 Settings are stored in `...\PAYDAY 2\mods\saves\more_weapon_stats.txt`.
 Old v76 setting keys are preserved.
@@ -144,7 +151,8 @@ Optional syntax gate:
 luajit -bl lua\entry.lua
 ```
 
-The current release is **v80**. Keep `mod.txt` and `changelog.txt` in sync when
+The current release is **v1** (the clean rewrite resets the old 76-80 version
+line). Keep `mod.txt`, `changelog.txt` and the GitHub release tag in sync when
 shipping changes.
 
 ## Credits

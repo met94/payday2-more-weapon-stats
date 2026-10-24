@@ -1,13 +1,21 @@
 {
 	"blt_version" : 2,
 	"name" : "More Weapon Stats",
-	"description" : "",
-	"author" : "TdlQ, KarateF22 for all the code taken from Better Weapon Stats GUI\n    code maintenance by Nexqua\n    chinese translation by Arknights\n    thai translation by NewPJzuza\n    russian translation by andole and x(GOREMAGEDDON)x\n    spanish translation by Kilowide",
+	"description" : "Clean-Lua rewrite of More Weapon Stats for PAYDAY 2 248.2: extended Black Market stats, breakpoints, melee and henchman panels without fake weapon units.",
+	"author" : "TdlQ, KarateF22 for all the code taken from Better Weapon Stats GUI\n    code maintenance by Nexqua\n    chinese translation by Arknights\n    thai translation by NewPJzuza\n    russian translation by andole and x(GOREMAGEDDON)x\n    spanish translation by Kilowide\n    248.2 clean rewrite by met94",
 	"image" : "tdlq.dds",
 	"color" : "0.52 1 0",
-	"contact" : "",
-	"version" : "80",
+	"contact" : "https://github.com/met94/payday2-more-weapon-stats",
+	"version" : "1",
 	"priority" : 20,
+	"updates" : [
+		{
+			"identifier" : "MoreWeaponStats",
+			"host" : {
+				"meta" : "https://github.com/met94/payday2-more-weapon-stats/releases/latest/download/meta.json"
+			}
+		}
+	],
 	"pre_hooks" : [
 		{
 			"hook_id" : "lib/entry",
